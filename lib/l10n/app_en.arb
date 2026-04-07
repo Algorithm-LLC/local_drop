@@ -1,0 +1,325 @@
+{
+  "@@locale": "en",
+  "appTitle": "LocalDrop",
+  "appTagline": "Send files locally",
+  "nearbyTab": "Nearby",
+  "transfersTab": "Transfers",
+  "historyTab": "History",
+  "settingsTab": "Settings",
+  "onboardingTitle": "Welcome to LocalDrop",
+  "onboardingSubtitle": "Pick a nickname so nearby devices can recognize you instantly.",
+  "nicknameLabel": "Nickname",
+  "continueButton": "Continue",
+  "saveButton": "Save",
+  "yourDeviceLabel": "Your device",
+  "activePortLabel": "Active port",
+  "composeSendButton": "Compose send",
+  "selectContentTitle": "Select content",
+  "chooseDeviceTitle": "Choose device",
+  "selectFilesButton": "Select files",
+  "chooseDeviceButton": "Choose device",
+  "moreContentOptions": "More options",
+  "addTextButton": "Add text",
+  "selectionTrayTitle": "Selected content",
+  "backToContent": "Back",
+  "clearSelectionButton": "Clear selection",
+  "selectedItemsWithTotal": "{count} item(s) • {total}",
+  "@selectedItemsWithTotal": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "sendingInProgress": "Sending...",
+  "dragDropHint": "Drag and drop files or folders here.",
+  "dropFilesNowHint": "Drop now to add to selection.",
+  "preparingSelectedContent": "Preparing selected content...",
+  "textPayloadEmpty": "Type text before adding it.",
+  "onlineLabel": "Online",
+  "sentToDevice": "Sent to {device}.",
+  "@sentToDevice": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "noDevicesFound": "No nearby LocalDrop devices found yet.",
+  "waitingForDevices": "Looking for nearby LocalDrop devices...",
+  "refreshDevicesButton": "Refresh",
+  "refreshHint": "Keep LocalDrop open on both devices and connected to the same local network.",
+  "networkWarmupStarting": "Starting local network...",
+  "networkWarmupHint": "LocalDrop is preparing nearby discovery and transfers in the background.",
+  "nearbyStatusTitle": "Nearby status",
+  "nearbyStatusReady": "Nearby sharing is ready.",
+  "nearbyStatusScanning": "Looking for nearby devices...",
+  "nearbyStatusCheckingDevices": "Found nearby devices. Finishing connection checks...",
+  "nearbyStatusNoDevices": "No nearby devices yet.",
+  "nearbyStatusNeedsAttention": "Nearby sharing needs attention.",
+  "nearbyStatusPaused": "Nearby receiving resumes when LocalDrop is back in the foreground.",
+  "nearbyReadyCount": "{count, plural, =0{No devices ready to receive} =1{1 device ready to receive} other{{count} devices ready to receive}}",
+  "@nearbyReadyCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nearbyFoundCount": "{count, plural, =0{No nearby devices yet} =1{1 device found nearby} other{{count} devices found nearby}}",
+  "@nearbyFoundCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nearbyNoDevicesSummary": "No devices found yet.",
+  "nearbyGenericDeviceLabel": "Nearby device",
+  "nearbyPausedHint": "Bring LocalDrop back to the foreground to receive nearby transfers.",
+  "nearbyIssueHint": "If something looks off, refresh and open Troubleshoot for more details.",
+  "nearbyTroubleshootButton": "Troubleshoot",
+  "nearbyTroubleshootTitle": "Nearby connection details",
+  "nearbyTechnicalStatusLabel": "Status",
+  "nearbyTechnicalDevicesLabel": "Devices",
+  "nearbyTechnicalDevicesValue": "Found: {found} • Ready: {ready}",
+  "@nearbyTechnicalDevicesValue": {
+    "placeholders": {
+      "found": {
+        "type": "int"
+      },
+      "ready": {
+        "type": "int"
+      }
+    }
+  },
+  "nearbyTechnicalListeningPortLabel": "Listening port",
+  "nearbyTechnicalInterfacesLabel": "Network interfaces",
+  "nearbyTechnicalPacketsLabel": "Network activity",
+  "nearbyTechnicalBackendsLabel": "Backends",
+  "nearbyTechnicalPerBackendLabel": "Per backend",
+  "nearbyTechnicalLastScanLabel": "Last scan",
+  "nearbyTechnicalFirewallLabel": "Windows firewall",
+  "nearbyTechnicalPermissionLabel": "Permission or setup",
+  "nearbyTechnicalIssueLabel": "Issue",
+  "nearbyTechnicalBackendIssuesLabel": "Backend issues",
+  "nearbyTechnicalRecentMessagesLabel": "Recent messages",
+  "nearbyEmptyPaused": "Nearby receiving is paused while LocalDrop is not open in the foreground.",
+  "nearbyEmptyChecking": "Found devices. Finishing connection checks...",
+  "nearbyEmptyIssue": "There was a nearby connection issue. Try Refresh or open Troubleshoot.",
+  "discoveryStatusTitle": "Discovery status",
+  "discoveryStatusStarting": "Starting nearby discovery...",
+  "discoveryStatusScanning": "Scanning the local network now...",
+  "discoveryStatusRunning": "Nearby discovery is running.",
+  "discoveryStatusStopped": "Nearby discovery is not running.",
+  "discoveryStatusNoScanYet": "No scan has completed yet.",
+  "discoveryStatusLastScan": "Last scan: {time}",
+  "@discoveryStatusLastScan": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "discoveryStatusPortPending": "Listening port is still being prepared.",
+  "discoveryStatusListeningPort": "Listening on port {port}.",
+  "@discoveryStatusListeningPort": {
+    "placeholders": {
+      "port": {
+        "type": "int"
+      }
+    }
+  },
+  "discoveryStatusInterfaces": "{interfaces} interface(s) ready • {targets} scan target(s)",
+  "@discoveryStatusInterfaces": {
+    "placeholders": {
+      "interfaces": {
+        "type": "int"
+      },
+      "targets": {
+        "type": "int"
+      }
+    }
+  },
+  "discoveryStatusPackets": "{sent} packet(s) sent • {received} packet(s) received",
+  "@discoveryStatusPackets": {
+    "placeholders": {
+      "sent": {
+        "type": "int"
+      },
+      "received": {
+        "type": "int"
+      }
+    }
+  },
+  "discoveryStatusError": "Discovery error: {message}",
+  "@discoveryStatusError": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "discoveryFirewallNotRequired": "Windows firewall setup is not required on this device.",
+  "discoveryFirewallReady": "Windows firewall already allows LocalDrop inbound traffic.",
+  "discoveryFirewallConfiguredNow": "Windows firewall access was configured for LocalDrop.",
+  "discoveryFirewallDenied": "Windows firewall permission was denied. Nearby devices may stay hidden until inbound access is allowed.",
+  "discoveryFirewallFailed": "Windows firewall setup failed: {message}",
+  "@discoveryFirewallFailed": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "repairFirewallButton": "Repair firewall",
+  "incomingRequestsTitle": "Incoming request",
+  "incomingRequestMessage": "{sender} wants to send {count} item(s).",
+  "@incomingRequestMessage": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "incomingRequestSize": "Size: {size}",
+  "@incomingRequestSize": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "incomingRequestExpiresIn": "Approval expires in {seconds}s.",
+  "@incomingRequestExpiresIn": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "acceptButton": "Accept",
+  "declineButton": "Decline",
+  "chooseRecipients": "Recipients",
+  "chooseContentType": "Content type",
+  "selectedItemsCount": "{count} item(s) selected",
+  "@selectedItemsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noItemsSelected": "No content selected yet.",
+  "attachButton": "Attach content",
+  "sendNowButton": "Send now",
+  "recipientCheckingButton": "Checking",
+  "recipientCheckAgainButton": "Check again",
+  "contentFile": "File",
+  "contentPhoto": "Photo",
+  "contentVideo": "Video",
+  "contentFolder": "Folder",
+  "contentText": "Text",
+  "contentClipboard": "Clipboard",
+  "textPayloadHint": "Type your text here...",
+  "clipboardEmpty": "Clipboard is empty.",
+  "transferIncoming": "Incoming",
+  "transferOutgoing": "Outgoing",
+  "statusPendingApproval": "Pending approval",
+  "statusApproved": "Approved",
+  "statusDeclined": "Declined",
+  "statusInProgress": "In progress",
+  "statusCompleted": "Completed",
+  "statusFailed": "Failed",
+  "statusCanceled": "Canceled",
+  "transferStageConnecting": "Connecting to receiver",
+  "transferStageOfferQueued": "Offer delivered",
+  "transferStageAwaitingApproval": "Waiting for receiver approval",
+  "transferStageUploading": "Uploading content",
+  "transferStageCompleting": "Finalizing transfer",
+  "speedLabel": "Speed",
+  "etaLabel": "ETA",
+  "cancelButton": "Cancel",
+  "retryButton": "Retry",
+  "openFolderButton": "Open folder",
+  "noActiveTransfers": "No active transfers right now.",
+  "transferFolderTitle": "Transfer folder",
+  "transferFolderPathLabel": "Location",
+  "transferFolderEmpty": "This folder is empty.",
+  "transferFolderUnavailable": "This folder is no longer available.",
+  "historySearchHint": "Search history by name or device",
+  "noHistory": "No transfer history yet.",
+  "themeSection": "Theme",
+  "themeSystem": "System",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "saveDirectoryLabel": "Save directory",
+  "pickDirectoryButton": "Choose directory",
+  "useDefaultDirectoryButton": "Use default",
+  "identitySection": "Identity",
+  "deviceIdLabel": "Device ID",
+  "fingerprintLabel": "Fingerprint",
+  "removeButton": "Remove",
+  "copied": "Copied",
+  "nicknameSaved": "Nickname saved.",
+  "settingsSaved": "Settings updated.",
+  "failedToSend": "Failed to send content.",
+  "sendErrorRecipientOffline": "Recipient is offline. Refresh nearby devices and try again.",
+  "sendErrorTransferUnreachable": "Receiver discovered, but the transfer port could not be reached.",
+  "sendErrorMissingFile": "One or more selected files are missing.",
+  "sendErrorTimeout": "Transfer timed out. Try again.",
+  "sendErrorApprovalExpired": "Approval expired before the receiver accepted.",
+  "sendErrorCertificate": "Security verification failed for this device.",
+  "sendErrorIntegrity": "Integrity check failed. Please resend.",
+  "sendErrorRejected": "Receiver declined the transfer.",
+  "sendErrorIncompatibleVersion": "Update LocalDrop on both devices before sending.",
+  "sendErrorBusy": "A send is already in progress.",
+  "sendErrorUnknown": "Something went wrong while sending.",
+  "recipientReadyMessage": "Ready to receive",
+  "recipientCheckingMessage": "Checking connection...",
+  "recipientNeedsUpdateMessage": "Update both devices to the latest LocalDrop build.",
+  "recipientSecurityMessage": "We couldn't verify this device securely. Check both devices and try again.",
+  "recipientUnavailableMessage": "This device was found, but it is not ready to receive yet.",
+  "recipientPendingMessage": "Found nearby. Finishing connection check...",
+  "updateRequiredLabel": "Update required",
+  "incompatibleDeviceHint": "This device needs the latest LocalDrop build before transfers can start.",
+  "selectAtLeastOneDevice": "Select at least one recipient.",
+  "selectContentFirst": "Select content first.",
+  "securityModelTitle": "Security",
+  "securityModelDescription": "Every incoming transfer requires explicit accept/decline. This build prioritizes reliable local-network transfer startup and approval-based receiver consent.",
+  "currentTransferTitle": "Current transfer",
+  "transferDetailsButton": "Details",
+  "transferDiagnosticsTitle": "Transfer details",
+  "closeButtonLabel": "Close",
+  "transferUnknownValue": "Unknown",
+  "transferNotAvailableValue": "Not available",
+  "transferDiagnosticsStageLabel": "Stage",
+  "transferDiagnosticsEndpointLabel": "Endpoint",
+  "transferDiagnosticsAddressFamilyLabel": "Address family",
+  "transferDiagnosticsSecurityLabel": "Transport security",
+  "transferDiagnosticsSecurityNotUsed": "Not used by the current local transport",
+  "transferDiagnosticsSecurityVerified": "Verified",
+  "transferDiagnosticsSecurityFailed": "Failed",
+  "transferDiagnosticsHttpRouteLabel": "HTTP route",
+  "transferDiagnosticsHttpStatusLabel": "HTTP status",
+  "transferDiagnosticsOfferStatusLabel": "Offer status",
+  "transferDiagnosticsDecisionLabel": "Decision",
+  "transferDiagnosticsUploadLabel": "Upload",
+  "transferDiagnosticsTerminalReasonLabel": "Reason",
+  "transferDiagnosticsMessageLabel": "Message",
+  "transferDiagnosticsNoExtraDetails": "No extra details were recorded.",
+  "transferDiagnosticsLogLabel": "Transport log",
+  "transferReasonConnectionIssue": "Connection issue",
+  "transferReasonSecurityIssue": "Security check failed",
+  "transferReasonApprovalExpired": "Approval expired",
+  "transferReasonDeclined": "Declined",
+  "transferReasonTransferFailed": "Transfer failed",
+  "transferReasonVerificationFailed": "Verification failed",
+  "transferReasonUpdateRequired": "Update required"
+}

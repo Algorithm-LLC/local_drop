@@ -1,0 +1,4 @@
+storeFile=C:\\path\\to\\localdrop-release.jks
+storePassword=replace-me
+keyAlias=localdrop
+keyPassword=replace-me

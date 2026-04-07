@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LocalDrop | Fast, direct local sharing</title>
+    <meta
+      name="description"
+      content="LocalDrop is a modern local transfer app for Android, iPhone, Windows, macOS, and Linux. Download the latest builds, compare release channels, and send files directly over your network."
+    />
+    <meta name="theme-color" content="#07151d" />
+    <meta property="og:title" content="LocalDrop" />
+    <meta
+      property="og:description"
+      content="A polished, direct local sharing experience with fast discovery, receiver approval, and modern cross-platform releases."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/localdrop-mark.svg" />
+    <link rel="icon" type="image/svg+xml" href="assets/localdrop-mark.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <div class="ambient ambient-a"></div>
+      <div class="ambient ambient-b"></div>
+      <div class="ambient-grid"></div>
+
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="LocalDrop home">
+          <img src="assets/localdrop-mark.svg" alt="" />
+          <span>LocalDrop</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#downloads">Downloads</a>
+          <a href="#features">Features</a>
+          <a href="#platforms">Platforms</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+
+        <div class="header-actions">
+          <a class="button button-ghost" id="privacyLink" href="#">Privacy</a>
+          <a class="button button-primary" href="#downloads">Download</a>
+        </div>
+      </header>
+
+      <main id="top">
+        <section class="hero section">
+          <div class="hero-copy">
+            <p class="eyebrow">Direct local sharing, refined</p>
+            <h1>
+              Move files across your devices
+              <span>without the friction.</span>
+            </h1>
+            <p class="hero-text">
+              LocalDrop is a modern nearby sharing app for Android, iPhone,
+              Windows, macOS, and Linux. Send files, folders, photos, videos,
+              and text directly over your local network with receiver approval
+              and a clean, focused interface.
+            </p>
+
+            <div class="hero-actions">
+              <a class="button button-primary" href="#downloads"
+                >Get the latest release</a
+              >
+              <a class="button button-ghost" href="#features"
+                >Explore features</a
+              >
+            </div>
+
+            <div class="hero-meta">
+              <div class="meta-pill">
+                <span class="meta-label">Current release</span>
+                <strong id="heroVersion">1.0.0</strong>
+              </div>
+              <div class="meta-pill">
+                <span class="meta-label">Release date</span>
+                <strong id="heroReleaseDate">April 7, 2026</strong>
+              </div>
+              <div class="meta-pill">
+                <span class="meta-label">Platforms</span>
+                <strong>Android, iOS, Windows, macOS, Linux</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-visual">
+            <div class="showcase-card showcase-main">
+              <div class="card-chip">Modern release hub</div>
+              <h2>One place for every LocalDrop build</h2>
+              <p>
+                Compare store releases, direct downloads, and desktop builds in
+                one polished page. Update the placeholders once, then publish to
+                GitHub Pages or your own domain.
+              </p>
+              <div class="showcase-grid">
+                <div class="showcase-stat">
+                  <span>Receiver approval</span>
+                  <strong>Built in</strong>
+                </div>
+                <div class="showcase-stat">
+                  <span>Transfer scope</span>
+                  <strong>Local network</strong>
+                </div>
+                <div class="showcase-stat">
+                  <span>Content types</span>
+                  <strong>Files, folders, media, text</strong>
+                </div>
+                <div class="showcase-stat">
+                  <span>Download options</span>
+                  <strong>Stores and direct builds</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="showcase-card showcase-side">
+              <div class="panel-head">
+                <span class="panel-title">Store Releases</span>
+                <span class="status-badge">Unavailable</span>
+              </div>
+              <ul class="pulse-list">
+                <li>
+                  <span>Google Play build</span>
+                  <strong id="playVersionLabel">v1.0.0</strong>
+                </li>
+                <li>
+                  <span>App Store build</span>
+                  <strong id="appStoreVersionLabel">v1.0.0</strong>
+                </li>
+                <li>
+                  <span>Desktop packages</span>
+                  <strong>Windows, macOS, Linux</strong>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="trust-strip section">
+          <div class="trust-card">
+            <span class="trust-kicker">Direct path</span>
+            <strong>No relay in the middle</strong>
+          </div>
+          <div class="trust-card">
+            <span class="trust-kicker">Receiver control</span>
+            <strong>Every incoming transfer can be accepted or declined</strong>
+          </div>
+          <div class="trust-card">
+            <span class="trust-kicker">Cross-platform</span>
+            <strong>One experience across phone and desktop devices</strong>
+          </div>
+          <div class="trust-card">
+            <span class="trust-kicker">Release ready</span>
+            <strong>Made for GitHub Pages, Google Play, and App Store linking</strong>
+          </div>
+        </section>
+
+        <section class="section section-downloads" id="downloads">
+          <div class="section-header">
+            <p class="eyebrow">Download LocalDrop</p>
+            <h2>Store versions and direct builds</h2>
+          </div>
+
+          <div class="release-toolbar">
+            <div class="toolbar-copy">
+              <strong>Latest public version</strong>
+              <span id="toolbarVersion">1.0.0</span>
+            </div>
+            <a class="button button-ghost" id="githubReleasesLink" href="#"
+              >View GitHub releases</a
+            >
+          </div>
+
+          <div class="release-grid" id="downloadGrid"></div>
+        </section>
+
+        <section class="section" id="features">
+          <div class="section-header">
+            <p class="eyebrow">Why people choose LocalDrop</p>
+            <h2>Built to feel calm, quick, and dependable</h2>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card">
+              <h3>Fast local discovery</h3>
+              <p>
+                LocalDrop is designed to find nearby devices on the same network
+                and keep the send flow close to the content you choose.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Receiver approval</h3>
+              <p>
+                Incoming transfers are not silently accepted. The receiver stays
+                in control, with clear accept and decline actions.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Broad content support</h3>
+              <p>
+                Send files, folders, photos, videos, text notes, or clipboard
+                content from a single interface.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>History and diagnostics</h3>
+              <p>
+                Review completed transfers, inspect progress, and reopen
+                received content with a cleaner troubleshooting path.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Modern cross-platform feel</h3>
+              <p>
+                Android, iPhone, Windows, macOS, and Linux each get a focused
+                experience without losing the shared LocalDrop identity.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Ready for publishing</h3>
+              <p>
+                This page is structured for release channels, store badges,
+                policy links, and professional announcement copy.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-platforms" id="platforms">
+          <div class="section-header">
+            <p class="eyebrow">Platform support</p>
+            <h2>One brand, multiple release channels</h2>
+          </div>
+
+          <div class="platform-grid">
+            <article class="platform-card">
+              <span class="platform-tag">Android</span>
+              <h3>Google Play and APK</h3>
+              <p>
+                Offer a clean store install for most users and a direct APK link
+                for testing, sideloading, or staged rollouts.
+              </p>
+            </article>
+            <article class="platform-card">
+              <span class="platform-tag">iPhone and iPad</span>
+              <h3>App Store and .ipa</h3>
+              <p>
+                Keep iPhone and iPad downloads focused on a clean App Store
+                install path for public releases, with an optional `.ipa`
+                package for sideloading and internal distribution.
+              </p>
+            </article>
+            <article class="platform-card">
+              <span class="platform-tag">Windows</span>
+              <h3>Installer and portable builds</h3>
+              <p>
+                Publish the latest desktop package with a short platform note,
+                version stamp, and architecture details.
+              </p>
+            </article>
+            <article class="platform-card">
+              <span class="platform-tag">macOS and Linux</span>
+              <h3>Native desktop downloads</h3>
+              <p>
+                Offer direct macOS packages and Linux downloads like AppImage
+                and .tar.gz while keeping the release story consistent and easy
+                to scan.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-steps">
+          <div class="section-header">
+            <p class="eyebrow">How it works</p>
+            <h2>A clearer transfer flow</h2>
+          </div>
+
+          <div class="step-grid">
+            <article class="step-card">
+              <span>01</span>
+              <h3>Choose what to send</h3>
+              <p>
+                Pick files, folders, photos, videos, or text from a focused
+                sender experience.
+              </p>
+            </article>
+            <article class="step-card">
+              <span>02</span>
+              <h3>Select a nearby device</h3>
+              <p>
+                LocalDrop surfaces compatible devices and keeps the discovery
+                feedback close to the action.
+              </p>
+            </article>
+            <article class="step-card">
+              <span>03</span>
+              <h3>Receiver confirms</h3>
+              <p>
+                The receiving device reviews the request and decides whether to
+                accept it.
+              </p>
+            </article>
+            <article class="step-card">
+              <span>04</span>
+              <h3>Transfer completes locally</h3>
+              <p>
+                Progress, status, and history stay easy to follow without
+                turning the interface into a dashboard.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section section-faq" id="faq">
+          <div class="section-header">
+            <p class="eyebrow">FAQ</p>
+            <h2>Questions people usually ask</h2>
+          </div>
+
+          <div class="faq-list">
+            <details class="faq-item" open>
+              <summary>What can I download from this page?</summary>
+              <p>
+                This page can include the latest LocalDrop releases for Android,
+                iPhone, Windows, macOS, and Linux, along with store links and
+                direct desktop downloads.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Where should I install LocalDrop from?</summary>
+              <p>
+                If a store version is available for your device, that is usually
+                the easiest option. Direct download links are useful for desktop
+                releases, testing, or manual installs.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Will every platform have the same version number?</summary>
+              <p>
+                Not always. LocalDrop releases can ship on different schedules
+                across stores and desktop packages, so each platform may show
+                its own latest available version.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Which devices does LocalDrop support?</summary>
+              <p>
+                LocalDrop is designed for Android, iPhone, Windows, macOS, and
+                Linux. Availability depends on which public store build or
+                direct package is currently published.
+              </p>
+            </details>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div>
+          <p class="footer-brand">LocalDrop</p>
+          <p class="footer-copy">
+            Modern nearby sharing for phones and desktops, built for direct
+            local transfers and cleaner release delivery.
+          </p>
+        </div>
+
+        <div class="footer-links">
+          <a id="footerGithubLink" href="#">GitHub</a>
+          <a id="footerPrivacyLink" href="#">Privacy Policy</a>
+          <a id="footerSupportLink" href="#">Support</a>
+        </div>
+
+        <div class="footer-meta">
+          <span id="footerVersion">Version 1.0.0</span>
+          <span>© <span id="footerYear"></span> <span id="footerPublisher">Algorithm LLC</span></span>
+        </div>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

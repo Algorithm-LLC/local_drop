@@ -1,0 +1,377 @@
+name: Build All (bundle)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java (17)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Ensure Linux desktop project exists
+        run: flutter create . --platforms=linux
+
+      - name: Build APK (release, flavor=dev)
+        run: flutter build apk --release --flavor dev
+
+      - name: Read version from pubspec.yaml
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK
+        id: apk
+        shell: bash
+        run: |
+          set -e
+          SRC_APK=$(ls -1 build/app/outputs/flutter-apk/*.apk | head -n 1)
+          VERSION="${{ steps.ver.outputs.version }}"
+          DEST_APK="LocalDrop-android-v${VERSION}.apk"
+          cp "$SRC_APK" "$DEST_APK"
+          echo "apk_path=$DEST_APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-android
+          path: ${{ steps.apk.outputs.apk_path }}
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libfuse2 libglib2.0-0 libsecret-1-dev libmpv-dev python3-pil
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build Linux (release)
+        run: flutter build linux --release
+
+      - name: Read version from pubspec.yaml
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create tar.gz bundle
+        id: tgz
+        shell: bash
+        run: |
+          set -e
+          VERSION="${{ steps.ver.outputs.version }}"
+          OUT_DIR="build/linux/x64/release/bundle"
+          if [ ! -d "$OUT_DIR" ]; then
+            echo "ERROR: bundle not found at $OUT_DIR"
+            ls -la build/linux/x64/release || true
+            exit 1
+          fi
+
+          TGZ="LocalDrop-linux-v${VERSION}.tar.gz"
+          tar -C "$OUT_DIR" -czf "$TGZ" .
+          echo "tgz_path=$TGZ" >> "$GITHUB_OUTPUT"
+
+      - name: Build AppImage
+        id: appimage
+        shell: bash
+        run: |
+          set -e
+          VERSION="${{ steps.ver.outputs.version }}"
+          OUT_DIR="build/linux/x64/release/bundle"
+
+          curl -L -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/latest/download/linuxdeploy-x86_64.AppImage
+
+          # linuxdeploy-plugin-gtk has no GitHub releases; skip download.
+
+          GTK_PLUGIN_OK=0
+          if [ -f linuxdeploy-plugin-gtk-x86_64.AppImage ]; then
+            SIZE=$(stat -c%s linuxdeploy-plugin-gtk-x86_64.AppImage || echo 0)
+            if [ "$SIZE" -gt 1000000 ]; then
+              GTK_PLUGIN_OK=1
+            fi
+          fi
+
+          if [ "$GTK_PLUGIN_OK" -ne 1 ]; then
+            echo "WARN: linuxdeploy-plugin-gtk AppImage not available, building without GTK plugin"
+          fi
+
+          chmod +x linuxdeploy-x86_64.AppImage
+          if [ -f linuxdeploy-plugin-gtk-x86_64.AppImage ]; then
+            chmod +x linuxdeploy-plugin-gtk-x86_64.AppImage
+          fi
+
+          mkdir -p AppDir/usr/bin
+          cp -r "$OUT_DIR/"* AppDir/usr/bin/
+
+          APP_NAME="$(grep '^name:' pubspec.yaml | awk '{print $2}')"
+          APP_BIN="AppDir/usr/bin/$APP_NAME"
+          if [ ! -x "$APP_BIN" ]; then
+            APP_BIN="$(find AppDir/usr/bin -maxdepth 1 -type f -executable | head -n 1)"
+          fi
+          if [ -z "$APP_BIN" ]; then
+            echo "ERROR: cannot find main executable in AppDir/usr/bin"
+            ls -la AppDir/usr/bin || true
+            exit 1
+          fi
+
+          mkdir -p AppDir/usr/share/applications
+          cat > AppDir/usr/share/applications/localdrop.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=LocalDrop
+          Exec=$(basename "$APP_BIN")
+          Icon=LocalDrop
+          Categories=Utility;
+          EOF
+
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          if [ -f "assets/icons/localdrop_app_icon.png" ]; then
+            python3 -c 'from PIL import Image; Image.open("assets/icons/localdrop_app_icon.png").resize((256, 256), Image.LANCZOS).save("AppDir/usr/share/icons/hicolor/256x256/apps/localdrop.png")'
+          else
+            printf '\x89PNG\r\n\x1a\n' > AppDir/usr/share/icons/hicolor/256x256/apps/localdrop.png
+          fi
+
+          export LINUXDEPLOY=./linuxdeploy-x86_64.AppImage
+          if [ "$GTK_PLUGIN_OK" -eq 1 ]; then
+            export LINUXDEPLOY_PLUGIN_GTK=./linuxdeploy-plugin-gtk-x86_64.AppImage
+          fi
+
+          if [ "$GTK_PLUGIN_OK" -eq 1 ]; then
+            ./linuxdeploy-x86_64.AppImage \
+              --appdir AppDir \
+              --executable "$APP_BIN" \
+              --desktop-file AppDir/usr/share/applications/localdrop.desktop \
+              --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/localdrop.png \
+              --plugin gtk \
+              --output appimage
+          else
+            ./linuxdeploy-x86_64.AppImage \
+              --appdir AppDir \
+              --executable "$APP_BIN" \
+              --desktop-file AppDir/usr/share/applications/localdrop.desktop \
+              --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/localdrop.png \
+              --output appimage
+          fi
+
+          APPIMAGE_OUT=$(ls -1 *.AppImage | head -n 1)
+          FINAL="LocalDrop-linux-v${VERSION}.AppImage"
+          mv "$APPIMAGE_OUT" "$FINAL"
+          chmod +x "$FINAL"
+
+          echo "appimage_path=$FINAL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-linux
+          path: |
+            ${{ steps.appimage.outputs.appimage_path }}
+            ${{ steps.tgz.outputs.tgz_path }}
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build Windows (release)
+        run: flutter build windows --release
+
+      - name: Read version from pubspec.yaml
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content "pubspec.yaml" | Where-Object { $_ -match '^version:' } | ForEach-Object {
+            ($_ -split ':')[1].Trim().Split(' ')[0]
+          } | Select-Object -First 1)
+          if (-not $v) { throw "Version not found in pubspec.yaml" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create ZIP from Release folder contents
+        id: zip
+        shell: pwsh
+        run: |
+          $sourceDir = "build/windows/x64/runner/Release"
+          if (-not (Test-Path $sourceDir)) { throw "Source folder not found: $sourceDir" }
+
+          $version = "${{ steps.ver.outputs.version }}"
+          $zipFile = "LocalDrop-win-v$version.zip"
+
+          if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
+
+          Compress-Archive -Path (Join-Path $sourceDir '*') -DestinationPath $zipFile -Force
+
+          "zip_path=$zipFile" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-windows
+          path: ${{ steps.zip.outputs.zip_path }}
+
+  build-macos-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build iOS
+        run: flutter build ios --no-codesign
+
+      - name: Create IPA
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r "LocalDrop-ios-v${VERSION}.ipa" Payload
+
+      - name: Build macOS (release)
+        run: flutter build macos
+
+      - name: Package DMG (drag & drop)
+        shell: bash
+        run: |
+          set -e
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+
+          APP_SRC="build/macos/Build/Products/Release/LocalDrop.app"
+          if [ ! -d "$APP_SRC" ]; then
+            echo "ERROR: macOS app not found at $APP_SRC"
+            ls -la build/macos/Build/Products/Release || true
+            exit 1
+          fi
+
+          STAGE_DIR="build/macos/dmg/LocalDrop"
+          rm -rf "build/macos/dmg"
+          mkdir -p "$STAGE_DIR"
+
+          cp -R "$APP_SRC" "$STAGE_DIR/LocalDrop.app"
+
+          APP_BUNDLE="$STAGE_DIR/LocalDrop.app"
+
+          if [ -d "$APP_BUNDLE/Contents/Frameworks" ]; then
+            find "$APP_BUNDLE/Contents/Frameworks" -type d -name "*.framework" -print0 \
+              | while IFS= read -r -d '' fw; do
+                  codesign --force --sign - "$fw" || true
+                done
+            find "$APP_BUNDLE/Contents/Frameworks" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 \
+              | while IFS= read -r -d '' lib; do
+                  codesign --force --sign - "$lib" || true
+                done
+          fi
+
+          codesign --force --sign - "$APP_BUNDLE"
+          codesign --verify --deep --strict "$APP_BUNDLE"
+
+          ln -s /Applications "$STAGE_DIR/Applications"
+
+          DMG_NAME="LocalDrop-macos-v${VERSION}.dmg"
+          hdiutil create \
+            -volname "LocalDrop" \
+            -srcfolder "$STAGE_DIR" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          echo "Created $DMG_NAME"
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-ios
+          path: LocalDrop-ios-v*.ipa
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-macos
+          path: LocalDrop-macos-v*.dmg
+
+  package-all:
+    runs-on: ubuntu-latest
+    needs: [build-android, build-linux, build-windows, build-macos-ios]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Read version from pubspec.yaml
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-all
+          path: dist/*

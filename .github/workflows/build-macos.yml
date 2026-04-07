@@ -1,0 +1,86 @@
+name: Build macOS (DMG)
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build macOS (release)
+        run: flutter build macos
+
+      - name: Package DMG (drag & drop)
+        shell: bash
+        run: |
+          set -e
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+
+          APP_SRC="build/macos/Build/Products/Release/LocalDrop.app"
+          if [ ! -d "$APP_SRC" ]; then
+            echo "ERROR: macOS app not found at $APP_SRC"
+            ls -la build/macos/Build/Products/Release || true
+            exit 1
+          fi
+
+          STAGE_DIR="build/macos/dmg/LocalDrop"
+          rm -rf "build/macos/dmg"
+          mkdir -p "$STAGE_DIR"
+
+          # Copy and rename app bundle to requested casing.
+          cp -R "$APP_SRC" "$STAGE_DIR/LocalDrop.app"
+
+          # macOS 15+ can refuse to load unsigned embedded frameworks.
+          # Ad-hoc sign (no identity) so dyld can load embedded frameworks/plugins.
+          # This is the minimum needed to *run* on modern macOS without a paid cert.
+          APP_BUNDLE="$STAGE_DIR/LocalDrop.app"
+
+          # Sign nested frameworks/binaries first (more reliable than relying on --deep).
+          if [ -d "$APP_BUNDLE/Contents/Frameworks" ]; then
+            find "$APP_BUNDLE/Contents/Frameworks" -type d -name "*.framework" -print0 \
+              | while IFS= read -r -d '' fw; do
+                  codesign --force --sign - "$fw" || true
+                done
+            find "$APP_BUNDLE/Contents/Frameworks" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 \
+              | while IFS= read -r -d '' lib; do
+                  codesign --force --sign - "$lib" || true
+                done
+          fi
+
+          # Sign the app bundle last.
+          codesign --force --sign - "$APP_BUNDLE"
+          codesign --verify --deep --strict "$APP_BUNDLE"
+
+          ln -s /Applications "$STAGE_DIR/Applications"
+
+          DMG_NAME="LocalDrop-macos-v${VERSION}.dmg"
+          hdiutil create \
+            -volname "LocalDrop" \
+            -srcfolder "$STAGE_DIR" \
+            -ov \
+            -format UDZO \
+            "$DMG_NAME"
+
+          echo "Created $DMG_NAME"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-macos
+          path: LocalDrop-macos-v*.dmg

@@ -1,0 +1,57 @@
+name: Build Android APK (dev flavor)
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java (17)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build APK (release, flavor=dev)
+        run: flutter build apk --release --flavor dev
+
+      - name: Read version from pubspec.yaml
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK to LocalDrop-android-vX.Y.Z.apk
+        id: apk
+        shell: bash
+        run: |
+          set -e
+          SRC_APK=$(ls -1 build/app/outputs/flutter-apk/*.apk | head -n 1)
+          VERSION="${{ steps.ver.outputs.version }}"
+          DEST_APK="LocalDrop-android-v${VERSION}.apk"
+          cp "$SRC_APK" "$DEST_APK"
+          echo "apk_path=$DEST_APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: LocalDrop-android
+          path: ${{ steps.apk.outputs.apk_path }}
