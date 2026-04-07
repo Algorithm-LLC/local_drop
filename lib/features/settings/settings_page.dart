@@ -16,21 +16,28 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _nicknameController;
+  late String _lastSyncedNickname;
   bool _savingNickname = false;
 
   @override
   void initState() {
     super.initState();
+    _lastSyncedNickname = widget.controller.preferences.nickname;
     _nicknameController = TextEditingController(
-      text: widget.controller.preferences.nickname,
+      text: _lastSyncedNickname,
     );
   }
 
   @override
   void didUpdateWidget(covariant SettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_nicknameController.text != widget.controller.preferences.nickname) {
-      _nicknameController.text = widget.controller.preferences.nickname;
+    final savedNickname = widget.controller.preferences.nickname;
+    if (savedNickname != _lastSyncedNickname) {
+      _lastSyncedNickname = savedNickname;
+      _nicknameController.value = TextEditingValue(
+        text: savedNickname,
+        selection: TextSelection.collapsed(offset: savedNickname.length),
+      );
     }
   }
 
@@ -282,6 +289,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) {
       return;
     }
+    _lastSyncedNickname = widget.controller.preferences.nickname;
     setState(() {
       _savingNickname = false;
     });
