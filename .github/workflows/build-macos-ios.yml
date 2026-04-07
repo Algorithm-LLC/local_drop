@@ -23,7 +23,18 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      # iOS
+      - name: Prepare iOS no-codesign config
+        shell: bash
+        run: |
+          {
+            echo ""
+            echo "# CI override for unsigned iOS artifact builds"
+            echo "CODE_SIGN_ENTITLEMENTS="
+            echo "DEVELOPMENT_TEAM="
+            echo "PROVISIONING_PROFILE_SPECIFIER="
+            echo "CODE_SIGN_STYLE=Manual"
+          } >> ios/Flutter/Release.xcconfig
+
       - name: Build iOS
         run: flutter build ios --no-codesign
 
@@ -36,9 +47,8 @@ jobs:
           cp -r build/ios/iphoneos/Runner.app Payload/
           zip -r "LocalDrop-ios-v${VERSION}.ipa" Payload
 
-      # macOS
       - name: Build macOS (release)
-        run: flutter build macos
+        run: flutter build macos --release
 
       - name: Package DMG (drag & drop)
         shell: bash
@@ -87,7 +97,6 @@ jobs:
 
           echo "Created $DMG_NAME"
 
-      # Upload both
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v6
         with:

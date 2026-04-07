@@ -31,14 +31,8 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Enable Linux desktop
-        run: flutter config --enable-linux-desktop
-
-      - name: Ensure Linux desktop project exists
-        run: flutter create . --platforms=linux
-
-      - name: Build APK (release, flavor=dev)
-        run: flutter build apk --release --flavor dev
+      - name: Build APK (release)
+        run: flutter build apk --release
 
       - name: Read version from pubspec.yaml
         id: ver
@@ -163,7 +157,7 @@ jobs:
           Type=Application
           Name=LocalDrop
           Exec=$(basename "$APP_BIN")
-          Icon=LocalDrop
+          Icon=localdrop
           Categories=Utility;
           EOF
 
@@ -276,6 +270,18 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Prepare iOS no-codesign config
+        shell: bash
+        run: |
+          {
+            echo ""
+            echo "# CI override for unsigned iOS artifact builds"
+            echo "CODE_SIGN_ENTITLEMENTS="
+            echo "DEVELOPMENT_TEAM="
+            echo "PROVISIONING_PROFILE_SPECIFIER="
+            echo "CODE_SIGN_STYLE=Manual"
+          } >> ios/Flutter/Release.xcconfig
+
       - name: Build iOS
         run: flutter build ios --no-codesign
 
@@ -289,7 +295,7 @@ jobs:
           zip -r "LocalDrop-ios-v${VERSION}.ipa" Payload
 
       - name: Build macOS (release)
-        run: flutter build macos
+        run: flutter build macos --release
 
       - name: Package DMG (drag & drop)
         shell: bash

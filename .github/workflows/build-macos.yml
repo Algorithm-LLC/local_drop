@@ -24,7 +24,7 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS (release)
-        run: flutter build macos
+        run: flutter build macos --release
 
       - name: Package DMG (drag & drop)
         shell: bash
