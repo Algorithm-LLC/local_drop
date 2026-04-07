@@ -75,7 +75,10 @@ android {
             signingConfig = if (hasReleaseSigning) {
                 signingConfigs.getByName("release")
             } else {
-                null
+                // Keep CI/local release APKs installable when a real release keystore
+                // is not configured yet. Production releases should still provide
+                // LOCALDROP_* signing secrets or android/key.properties.
+                signingConfigs.getByName("debug")
             }
         }
     }
