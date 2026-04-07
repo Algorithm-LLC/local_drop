@@ -28,7 +28,6 @@ jobs:
         run: |
           {
             echo ""
-            echo "# CI override for unsigned iOS artifact builds"
             echo "CODE_SIGN_ENTITLEMENTS="
             echo "DEVELOPMENT_TEAM="
             echo "PROVISIONING_PROFILE_SPECIFIER="
