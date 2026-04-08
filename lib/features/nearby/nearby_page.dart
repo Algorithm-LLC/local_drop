@@ -34,6 +34,9 @@ class _NearbyPageState extends State<NearbyPage> {
   bool get _supportsDesktopDrop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux);
 
+  bool get _supportsFolderSelection =>
+      !kIsWeb && !Platform.isAndroid && !Platform.isIOS;
+
   @override
   void dispose() {
     _textController.dispose();
@@ -153,13 +156,14 @@ class _NearbyPageState extends State<NearbyPage> {
                       icon: const Icon(Icons.videocam),
                       label: Text(l10n.contentVideo),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _isPreparingItems || draft.isSending
-                          ? null
-                          : () => _pickByType(TransferPayloadType.folder),
-                      icon: const Icon(Icons.folder),
-                      label: Text(l10n.contentFolder),
-                    ),
+                    if (_supportsFolderSelection)
+                      OutlinedButton.icon(
+                        onPressed: _isPreparingItems || draft.isSending
+                            ? null
+                            : () => _pickByType(TransferPayloadType.folder),
+                        icon: const Icon(Icons.folder),
+                        label: Text(l10n.contentFolder),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 14),

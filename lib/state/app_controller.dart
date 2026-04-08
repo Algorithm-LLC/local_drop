@@ -656,6 +656,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<int> addDraftItemsFromType(TransferPayloadType type) async {
+    if (type == TransferPayloadType.folder &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      return 0;
+    }
     final items = await _payloadBuilder.pickByType(type);
     _sendDraft = _sendDraft.addItems(items);
     notifyListeners();
