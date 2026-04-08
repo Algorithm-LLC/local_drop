@@ -766,13 +766,45 @@ p {
     grid-template-columns: 1fr;
   }
 
+  .site-header {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .brand {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 10px;
+    font-size: 1rem;
+  }
+
+  .brand img {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .header-actions {
-    width: 100%;
+    width: auto;
+    margin-left: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
   }
 
   .header-actions .button {
-    flex: 1 1 0;
+    flex: 0 0 auto;
+    min-height: 46px;
+    padding-inline: 16px;
   }
+
 
   .hero {
     padding-top: 48px;
@@ -820,5 +852,11 @@ p {
   .footer-meta {
     justify-items: start;
     text-align: left;
+  }
+}
+
+@media (max-width: 430px) {
+  #privacyLink {
+    display: none;
   }
 }
