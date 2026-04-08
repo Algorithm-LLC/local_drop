@@ -246,7 +246,7 @@ p {
 .hero-copy h1 {
   margin: 0;
   max-width: 11.5ch;
-  font-size: clamp(3.2rem, 6vw, 5.9rem);
+  font-size: clamp(3rem, 2.35rem + 3vw, 5.1rem);
   line-height: 0.94;
   letter-spacing: -0.05em;
 }
@@ -812,7 +812,7 @@ p {
 
   .hero-copy h1 {
     max-width: none;
-    font-size: clamp(2.7rem, 12vw, 4.3rem);
+    font-size: clamp(2.45rem, 1.95rem + 4.2vw, 3.55rem);
     line-height: 0.96;
   }
 
