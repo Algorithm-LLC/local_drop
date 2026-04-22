@@ -946,6 +946,36 @@ abstract class AppLocalizations {
   /// **'Use default'**
   String get useDefaultDirectoryButton;
 
+  /// No description provided for @websiteLinkLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Get LocalDrop on your other devices'**
+  String get websiteLinkLabel;
+
+  /// No description provided for @websiteLinkDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Install LocalDrop on Windows, macOS, Linux, Android, or iPhone from the official website.'**
+  String get websiteLinkDescription;
+
+  /// No description provided for @openWebsiteButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Open website'**
+  String get openWebsiteButton;
+
+  /// No description provided for @copyLinkButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get copyLinkButton;
+
+  /// No description provided for @websiteOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the LocalDrop website.'**
+  String get websiteOpenFailed;
+
   /// No description provided for @identitySection.
   ///
   /// In en, this message translates to:

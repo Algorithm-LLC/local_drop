@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_drop/l10n/app_localizations.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/constants/app_links.dart';
 import '../../models/app_preferences.dart';
 import '../../state/app_controller.dart';
 
@@ -87,6 +89,115 @@ class _SettingsPageState extends State<SettingsPage> {
                           : Text(l10n.saveButton),
                     ),
                   ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Icon(
+                        Icons.devices_other_rounded,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            l10n.websiteLinkLabel,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            l10n.websiteLinkDescription,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.55,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: Text(
+                    AppLinks.website,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final actionButtons = Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      alignment: WrapAlignment.end,
+                      children: <Widget>[
+                        FilledButton.icon(
+                          onPressed: _openWebsite,
+                          icon: const Icon(Icons.open_in_new),
+                          label: Text(l10n.openWebsiteButton),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _copyWebsiteLink,
+                          icon: const Icon(Icons.copy),
+                          label: Text(l10n.copyLinkButton),
+                        ),
+                      ],
+                    );
+                    if (constraints.maxWidth < 560) {
+                      return Align(
+                        alignment: Alignment.centerRight,
+                        child: actionButtons,
+                      );
+                    }
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[Expanded(child: actionButtons)],
+                    );
+                  },
                 ),
               ],
             ),
@@ -296,6 +407,28 @@ class _SettingsPageState extends State<SettingsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(l10n.nicknameSaved)));
+  }
+
+  Future<void> _openWebsite() async {
+    final l10n = AppLocalizations.of(context)!;
+    final opened = await launchUrl(
+      Uri.parse(AppLinks.website),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!mounted || opened) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.websiteOpenFailed)));
+  }
+
+  void _copyWebsiteLink() {
+    final l10n = AppLocalizations.of(context)!;
+    Clipboard.setData(const ClipboardData(text: AppLinks.website));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.copied)));
   }
 }
 

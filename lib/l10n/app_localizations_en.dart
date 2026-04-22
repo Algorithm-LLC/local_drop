@@ -494,6 +494,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get useDefaultDirectoryButton => 'Use default';
 
   @override
+  String get websiteLinkLabel => 'Get LocalDrop on your other devices';
+
+  @override
+  String get websiteLinkDescription =>
+      'Install LocalDrop on Windows, macOS, Linux, Android, or iPhone from the official website.';
+
+  @override
+  String get openWebsiteButton => 'Open website';
+
+  @override
+  String get copyLinkButton => 'Copy link';
+
+  @override
+  String get websiteOpenFailed => 'Couldn\'t open the LocalDrop website.';
+
+  @override
   String get identitySection => 'Identity';
 
   @override
