@@ -125,7 +125,7 @@ jobs:
               close
             end tell
           end tell
-APPLESCRIPT
+          APPLESCRIPT
 
           sync
           hdiutil detach "$DEVICE"
