@@ -83,13 +83,61 @@ jobs:
 
           ln -s /Applications "$STAGE_DIR/Applications"
 
+          RW_DMG="build/macos/dmg/LocalDrop-temp.dmg"
           DMG_NAME="LocalDrop-macos-v${VERSION}.dmg"
+          rm -f "$RW_DMG" "$DMG_NAME"
+
           hdiutil create \
             -volname "LocalDrop" \
             -srcfolder "$STAGE_DIR" \
             -ov \
+            -format UDRW \
+            -fs HFS+ \
+            "$RW_DMG"
+
+          ATTACH_OUTPUT=$(hdiutil attach "$RW_DMG" -readwrite -noverify -noautoopen)
+          DEVICE=$(echo "$ATTACH_OUTPUT" | awk '/\/Volumes\/LocalDrop/{print $1; exit}')
+          if [ -z "$DEVICE" ]; then
+            echo "ERROR: failed to mount temporary DMG"
+            echo "$ATTACH_OUTPUT"
+            exit 1
+          fi
+
+          osascript <<'APPLESCRIPT'
+          tell application "Finder"
+            tell disk "LocalDrop"
+              open
+              tell container window
+                set current view to icon view
+                set toolbar visible to false
+                set statusbar visible to false
+                set bounds to {120, 120, 660, 420}
+              end tell
+              tell icon view options of container window
+                set arrangement to not arranged
+                set icon size to 104
+                set text size to 14
+              end tell
+              set position of item "LocalDrop.app" of container window to {150, 170}
+              set position of item "Applications" of container window to {410, 170}
+              update without registering applications
+              delay 2
+              close
+            end tell
+          end tell
+APPLESCRIPT
+
+          sync
+          hdiutil detach "$DEVICE"
+
+          hdiutil convert \
+            "$RW_DMG" \
+            -ov \
             -format UDZO \
-            "$DMG_NAME"
+            -imagekey zlib-level=9 \
+            -o "$DMG_NAME"
+
+          rm -f "$RW_DMG"
 
           echo "Created $DMG_NAME"
 
