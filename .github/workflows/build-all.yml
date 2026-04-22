@@ -339,7 +339,7 @@ jobs:
           codesign --verify --deep --strict "$APP_BUNDLE"
 
           ENTITLEMENTS_DUMP=$(mktemp)
-          codesign -d --entitlements :- "$APP_BUNDLE" 2> "$ENTITLEMENTS_DUMP"
+          codesign -d --entitlements :- "$APP_BUNDLE" > "$ENTITLEMENTS_DUMP" 2>/dev/null
           if ! grep -q "com.apple.security.files.user-selected.read-write" "$ENTITLEMENTS_DUMP"; then
             echo "ERROR: staged macOS app is missing user-selected file access entitlements"
             cat "$ENTITLEMENTS_DUMP"
