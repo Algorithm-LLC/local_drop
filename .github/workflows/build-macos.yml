@@ -111,15 +111,15 @@ jobs:
                 set current view to icon view
                 set toolbar visible to false
                 set statusbar visible to false
-                set bounds to {120, 120, 660, 420}
+                set bounds to {140, 140, 640, 360}
               end tell
               tell icon view options of container window
                 set arrangement to not arranged
-                set icon size to 104
-                set text size to 14
+                set icon size to 88
+                set text size to 13
               end tell
-              set position of item "LocalDrop.app" of container window to {150, 170}
-              set position of item "Applications" of container window to {410, 170}
+              set position of item "LocalDrop.app" of container window to {140, 95}
+              set position of item "Applications" of container window to {360, 95}
               update without registering applications
               delay 2
               close
