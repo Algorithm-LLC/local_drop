@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,6 +14,7 @@ import '../models/device_profile.dart';
 import '../models/discovery_health.dart';
 import '../models/network_interface_snapshot.dart';
 import '../models/peer_presence_models.dart';
+import '../models/picker_failure.dart';
 import '../models/send_draft.dart';
 import '../models/transfer_diagnostics_snapshot.dart';
 import '../models/transfer_models.dart';
@@ -550,13 +552,44 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> pickSaveDirectory() async {
-    final selected = await FilePicker.platform.getDirectoryPath();
-    if (selected == null || selected.trim().isEmpty) {
-      return;
+    try {
+      final selected = await FilePicker.platform.getDirectoryPath();
+      if (selected == null || selected.trim().isEmpty) {
+        return;
+      }
+      _preferences = _preferences.copyWith(saveDirectory: selected);
+      await _store.savePreferences(_preferences);
+      notifyListeners();
+    } on PlatformException catch (error) {
+      final failure = PickerFailure.fromPlatformException(
+        operation: 'pickSaveDirectory',
+        error: error,
+      );
+      await _logTransportEvent(
+        'picker',
+        'Save directory picker failed',
+        data: failure.toLogData(),
+      );
+      rethrow;
+    } catch (error) {
+      if (error is PickerFailure) {
+        await _logTransportEvent(
+          'picker',
+          'Save directory picker failed',
+          data: error.toLogData(),
+        );
+        rethrow;
+      }
+      await _logTransportEvent(
+        'picker',
+        'Save directory picker failed',
+        data: <String, Object?>{'error': error.toString()},
+      );
+      throw PickerFailure.fromError(
+        operation: 'pickSaveDirectory',
+        error: error,
+      );
     }
-    _preferences = _preferences.copyWith(saveDirectory: selected);
-    await _store.savePreferences(_preferences);
-    notifyListeners();
   }
 
   Future<void> useDefaultSaveDirectory() async {
@@ -660,10 +693,32 @@ class AppController extends ChangeNotifier {
         (Platform.isAndroid || Platform.isIOS)) {
       return 0;
     }
-    final items = await _payloadBuilder.pickByType(type);
-    _sendDraft = _sendDraft.addItems(items);
-    notifyListeners();
-    return items.length;
+    try {
+      final items = await _payloadBuilder.pickByType(type);
+      _sendDraft = _sendDraft.addItems(items);
+      notifyListeners();
+      return items.length;
+    } on PickerFailure catch (error) {
+      await _logTransportEvent(
+        'picker',
+        'Content picker failed',
+        data: <String, Object?>{
+          'contentType': type.name,
+          ...error.toLogData(),
+        },
+      );
+      rethrow;
+    } catch (error) {
+      await _logTransportEvent(
+        'picker',
+        'Content picker failed',
+        data: <String, Object?>{
+          'contentType': type.name,
+          'error': error.toString(),
+        },
+      );
+      throw PickerFailure.fromError(operation: type.name, error: error);
+    }
   }
 
   Future<int> addDraftItemsFromPaths(List<String> paths) async {

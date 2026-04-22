@@ -8,6 +8,7 @@ import 'package:local_drop/l10n/app_localizations.dart';
 
 import '../../models/device_profile.dart';
 import '../../models/discovery_health.dart';
+import '../../models/picker_failure.dart';
 import '../../models/send_draft.dart';
 import '../../models/transfer_diagnostics_snapshot.dart';
 import '../../models/transfer_models.dart';
@@ -465,16 +466,25 @@ class _NearbyPageState extends State<NearbyPage> {
   }
 
   Future<void> _pickByType(TransferPayloadType type) async {
-    final count = await _runPreparingItems(
-      () => widget.controller.addDraftItemsFromType(type),
-    );
-    if (!mounted || count == null || count > 0) {
-      return;
-    }
     final l10n = AppLocalizations.of(context)!;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(l10n.noItemsSelected)));
+    try {
+      final count = await _runPreparingItems(
+        () => widget.controller.addDraftItemsFromType(type),
+      );
+      if (!mounted || count == null || count > 0) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.noItemsSelected)));
+    } on PickerFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_pickerFailureMessage(l10n, error))),
+      );
+    }
   }
 
   Future<void> _addTextPayload() async {
@@ -659,6 +669,16 @@ class _NearbyPageState extends State<NearbyPage> {
         });
       }
     }
+  }
+
+  String _pickerFailureMessage(
+    AppLocalizations l10n,
+    PickerFailure failure,
+  ) {
+    if (failure.isMacOSAvailabilityIssue) {
+      return l10n.macosContentPickerUnavailable;
+    }
+    return l10n.contentPickerOpenFailed;
   }
 
   String _emptyStateMessage(

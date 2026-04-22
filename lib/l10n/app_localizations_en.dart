@@ -494,6 +494,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get useDefaultDirectoryButton => 'Use default';
 
   @override
+  String get macosContentPickerUnavailable =>
+      'File selection is unavailable in this macOS build. Reinstall a build with file-access permissions.';
+
+  @override
+  String get contentPickerOpenFailed =>
+      'Couldn\'t open the file chooser. Try again.';
+
+  @override
+  String get macosDirectoryPickerUnavailable =>
+      'Directory selection is unavailable in this macOS build. Reinstall a build with file-access permissions.';
+
+  @override
+  String get directoryPickerOpenFailed =>
+      'Couldn\'t open the directory chooser. Try again.';
+
+  @override
   String get websiteLinkLabel => 'Get LocalDrop on your other devices';
 
   @override

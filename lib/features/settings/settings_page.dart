@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants/app_links.dart';
 import '../../models/app_preferences.dart';
+import '../../models/picker_failure.dart';
 import '../../state/app_controller.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -308,7 +309,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           label: Text(l10n.useDefaultDirectoryButton),
                         ),
                         OutlinedButton.icon(
-                          onPressed: widget.controller.pickSaveDirectory,
+                          onPressed: _pickSaveDirectory,
                           icon: const Icon(Icons.folder_open),
                           label: Text(l10n.pickDirectoryButton),
                         ),
@@ -429,6 +430,23 @@ class _SettingsPageState extends State<SettingsPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(l10n.copied)));
+  }
+
+  Future<void> _pickSaveDirectory() async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await widget.controller.pickSaveDirectory();
+    } on PickerFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final message = error.isMacOSAvailabilityIssue
+          ? l10n.macosDirectoryPickerUnavailable
+          : l10n.directoryPickerOpenFailed;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 }
 

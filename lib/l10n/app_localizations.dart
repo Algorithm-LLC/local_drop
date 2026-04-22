@@ -946,6 +946,30 @@ abstract class AppLocalizations {
   /// **'Use default'**
   String get useDefaultDirectoryButton;
 
+  /// No description provided for @macosContentPickerUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'File selection is unavailable in this macOS build. Reinstall a build with file-access permissions.'**
+  String get macosContentPickerUnavailable;
+
+  /// No description provided for @contentPickerOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the file chooser. Try again.'**
+  String get contentPickerOpenFailed;
+
+  /// No description provided for @macosDirectoryPickerUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Directory selection is unavailable in this macOS build. Reinstall a build with file-access permissions.'**
+  String get macosDirectoryPickerUnavailable;
+
+  /// No description provided for @directoryPickerOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the directory chooser. Try again.'**
+  String get directoryPickerOpenFailed;
+
   /// No description provided for @websiteLinkLabel.
   ///
   /// In en, this message translates to:

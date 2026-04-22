@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/picker_failure.dart';
 import '../models/transfer_models.dart';
 import 'media_selection_service.dart';
 
@@ -145,40 +146,61 @@ class PayloadBuilder {
     List<String>? allowedExtensions,
     TransferPayloadType? forceType,
   }) async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: pickerType,
-      allowedExtensions: allowedExtensions,
-      withData: false,
-    );
-    if (result == null) {
-      return const <TransferItem>[];
-    }
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: pickerType,
+        allowedExtensions: allowedExtensions,
+        withData: false,
+      );
+      if (result == null) {
+        return const <TransferItem>[];
+      }
 
-    final items = <TransferItem>[];
-    for (final selected in result.files) {
-      final path = selected.path;
-      if (path == null) {
-        continue;
+      final items = <TransferItem>[];
+      for (final selected in result.files) {
+        final path = selected.path;
+        if (path == null) {
+          continue;
+        }
+        final item = await _buildFileItem(path, forceType: forceType);
+        if (item != null) {
+          items.add(item);
+        }
       }
-      final item = await _buildFileItem(path, forceType: forceType);
-      if (item != null) {
-        items.add(item);
-      }
+      return items;
+    } on PlatformException catch (error) {
+      throw PickerFailure.fromPlatformException(
+        operation: 'pickFiles',
+        error: error,
+      );
+    } catch (error) {
+      throw PickerFailure.fromError(operation: 'pickFiles', error: error);
     }
-    return items;
   }
 
   Future<TransferItem?> _pickFolderAsArchive() async {
-    final directoryPath = await FilePicker.platform.getDirectoryPath();
-    if (directoryPath == null || directoryPath.trim().isEmpty) {
-      return null;
+    try {
+      final directoryPath = await FilePicker.platform.getDirectoryPath();
+      if (directoryPath == null || directoryPath.trim().isEmpty) {
+        return null;
+      }
+      final folder = Directory(directoryPath);
+      if (!await folder.exists()) {
+        return null;
+      }
+      return _archiveDirectory(directoryPath);
+    } on PlatformException catch (error) {
+      throw PickerFailure.fromPlatformException(
+        operation: 'getDirectoryPath',
+        error: error,
+      );
+    } catch (error) {
+      throw PickerFailure.fromError(
+        operation: 'getDirectoryPath',
+        error: error,
+      );
     }
-    final folder = Directory(directoryPath);
-    if (!await folder.exists()) {
-      return null;
-    }
-    return _archiveDirectory(directoryPath);
   }
 
   Future<TransferItem?> _buildFileItem(
