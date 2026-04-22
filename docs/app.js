@@ -1,7 +1,7 @@
 const siteData = {
   productName: "LocalDrop",
-  currentVersion: "1.0.0",
-  releaseDate: "April 7, 2026",
+  currentVersion: "1.0.1",
+  releaseDate: "April 22, 2026",
   publisher: "Algorithm LLC",
   privacyPolicyUrl: "https://github.com/Algorithm-LLC/local_drop/blob/main/PRIVACY_POLICY.md",
   githubUrl: "https://github.com/Algorithm-LLC/local_drop",
