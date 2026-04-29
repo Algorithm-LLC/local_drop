@@ -1267,13 +1267,13 @@ abstract class AppLocalizations {
   /// No description provided for @transferDiagnosticsHttpRouteLabel.
   ///
   /// In en, this message translates to:
-  /// **'HTTP route'**
+  /// **'Transfer route'**
   String get transferDiagnosticsHttpRouteLabel;
 
   /// No description provided for @transferDiagnosticsHttpStatusLabel.
   ///
   /// In en, this message translates to:
-  /// **'HTTP status'**
+  /// **'Transfer status'**
   String get transferDiagnosticsHttpStatusLabel;
 
   /// No description provided for @transferDiagnosticsOfferStatusLabel.

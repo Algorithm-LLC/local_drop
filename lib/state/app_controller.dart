@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/constants/network_constants.dart';
+import '../core/security/fingerprint_codes.dart';
 import '../core/storage/app_store.dart';
 import '../models/app_preferences.dart';
 import '../models/device_profile.dart';
@@ -22,7 +23,9 @@ import '../services/discovery_service.dart';
 import '../services/local_identity_service.dart';
 import '../services/local_network_platform_service.dart';
 import '../services/payload_builder.dart';
+import '../services/peer_trust_service.dart';
 import '../services/transport_log_service.dart';
+import '../services/transfer_pin_service.dart';
 import '../services/transfer_client.dart';
 import '../services/transfer_server.dart';
 
@@ -112,12 +115,8 @@ class AppController extends ChangeNotifier {
   static const Duration _pendingPeerAvailabilityProbeCooldown = Duration(
     seconds: 3,
   );
-  static const Duration _zeroPeerHealthSweepCooldown = Duration(seconds: 8);
-  static const Duration _supplementalHealthSweepCooldown = Duration(
-    seconds: 6,
-  );
-  static const int _zeroPeerHealthSweepConcurrency = 24;
-
+  static const Duration _desktopHealthSweepCooldown = Duration(seconds: 8);
+  static const int _desktopHealthSweepConcurrency = 16;
   final Uuid _uuid = const Uuid();
   final Map<String, TransferProgress> _activeTransfers =
       <String, TransferProgress>{};
@@ -130,6 +129,8 @@ class AppController extends ChangeNotifier {
       <String, TransferDiagnosticsSnapshot>{};
   final Map<String, TransportVerifiedPeerLease> _transportVerifiedPeerLeases =
       <String, TransportVerifiedPeerLease>{};
+  final Map<String, DeviceProfile> _pendingIncomingTrustByTransferId =
+      <String, DeviceProfile>{};
   final Map<String, Future<PeerAvailabilitySnapshot>>
   _peerAvailabilityProbeFutures = <String, Future<PeerAvailabilitySnapshot>>{};
   final Map<String, int> _peerAvailabilityProbeGenerations = <String, int>{};
@@ -139,11 +140,13 @@ class AppController extends ChangeNotifier {
   Timer? _discoveryRescanTimer;
   bool _isDiscoveryRestarting = false;
   bool _isDiscoveryForegroundPaused = false;
+  bool _isMobileBackgrounded = false;
+  bool _backgroundPauseDeferredForTransport = false;
   int _discoveryScanInFlightCount = 0;
   DateTime? _lastHealthyDiscoveryAt;
+  DateTime? _lastDesktopHealthSweepAt;
   bool _watchdogSoftRefreshPendingHardRestart = false;
-  DateTime? _lastZeroPeerHealthSweepAt;
-  bool _zeroPeerHealthSweepInFlight = false;
+  bool _desktopHealthSweepInFlight = false;
   bool _initialized = false;
   bool _isInitializing = false;
   String? _fatalError;
@@ -166,6 +169,8 @@ class AppController extends ChangeNotifier {
   List<DeviceProfile> _nearbyDevices = const <DeviceProfile>[];
   DiscoveryHealth _discoveryHealth = const DiscoveryHealth();
   List<TransferRecord> _history = const <TransferRecord>[];
+  Map<String, TrustedPeerRecord> _trustedPeersById =
+      <String, TrustedPeerRecord>{};
   SendDraft _sendDraft = const SendDraft.empty();
 
   bool get isInitialized => _initialized;
@@ -179,8 +184,13 @@ class AppController extends ChangeNotifier {
 
   AppPreferences get preferences => _preferences;
   LocalIdentity? get identity => _identity;
+  String get localSecurityCode =>
+      shortSecurityCodeForFingerprint(_identity?.fingerprint ?? '');
   int get activePort => _activePort;
   List<DeviceProfile> get nearbyDevices => _nearbyDevices;
+  List<TrustedPeerRecord> get trustedPeers =>
+      _trustedPeersById.values.toList(growable: false)
+        ..sort((a, b) => b.lastVerifiedAt.compareTo(a.lastVerifiedAt));
   DiscoveryHealth get discoveryHealth => _discoveryHealth;
   Map<String, TransportVerifiedPeerLease> get transportVerifiedPeerLeases =>
       Map<String, TransportVerifiedPeerLease>.unmodifiable(
@@ -199,6 +209,15 @@ class AppController extends ChangeNotifier {
   List<TransferProgress> get activeTransfers =>
       _activeTransfers.values.toList(growable: false)
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+  bool get _hasActiveTransportWork =>
+      _sendDraft.isSending ||
+      _activeTransfers.values.any((item) => !_isTerminal(item.status)) ||
+      _incomingSessionsById.values.any(
+        (item) =>
+            item.status == TransferDecisionStatus.pending ||
+            item.status == TransferDecisionStatus.accepted,
+      );
 
   List<IncomingTransferSession> get incomingTransferSessions =>
       _incomingSessionsById.values.toList(growable: false)..sort((a, b) {
@@ -250,6 +269,18 @@ class AppController extends ChangeNotifier {
     return 'LocalDrop';
   }
 
+  TransferPinSettings? _transferPinSettings() {
+    if (!_preferences.hasCurrentTransferPin) {
+      return null;
+    }
+    return TransferPinSettings(
+      algorithm: _preferences.transferPinAlgorithm ?? '',
+      saltBase64: _preferences.transferPinSaltBase64 ?? '',
+      hashBase64: _preferences.transferPinHashBase64 ?? '',
+      iterations: _preferences.transferPinIterations,
+    );
+  }
+
   static Future<String> _loadAppVersionFromPlatform() async {
     try {
       final info = await PackageInfo.fromPlatform();
@@ -271,6 +302,9 @@ class AppController extends ChangeNotifier {
       await _store.init();
       _preferences = await _store.loadPreferences();
       _history = _store.loadTransferHistory().reversed.toList(growable: false);
+      _trustedPeersById = <String, TrustedPeerRecord>{
+        for (final peer in _store.loadTrustedPeers()) peer.deviceId: peer,
+      };
       _appVersion = await _appVersionLoader();
       _initialized = true;
       _fatalError = null;
@@ -313,6 +347,9 @@ class AppController extends ChangeNotifier {
       await _runStartupPhase('multicast-lock', () async {
         await _localNetworkPlatformService.acquireMulticastLock();
       });
+      await _runStartupPhase('wifi-lock', () async {
+        await _localNetworkPlatformService.acquireWifiLock();
+      });
       _configureTransferServices();
       await _runStartupPhase('transfer-server-start', () async {
         await _startServersWithFallback();
@@ -332,7 +369,7 @@ class AppController extends ChangeNotifier {
           ? NetworkStartupState.degraded
           : NetworkStartupState.ready;
       _fatalError = null;
-      unawaited(_runInitialHealthSweepInBackground());
+      unawaited(_runInitialDesktopHealthSweepInBackground());
     } catch (error) {
       _networkStartupState = NetworkStartupState.failed;
       _discoveryHealth = _discoveryHealth.copyWith(
@@ -350,13 +387,16 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _runInitialHealthSweepInBackground() async {
+  Future<void> _runInitialDesktopHealthSweepInBackground() async {
+    if (!_shouldRunDesktopHealthSweep) {
+      return;
+    }
     final stopwatch = Stopwatch()..start();
     try {
-      await _runForegroundHealthSweepIfNeeded();
+      await _runDesktopHealthSweepIfNeeded(force: true);
       await _logTransportEvent(
         'startup',
-        'Initial health sweep completed',
+        'Initial desktop health sweep completed',
         data: <String, Object?>{
           'durationMs': stopwatch.elapsedMilliseconds,
           'visiblePeerCount': _nearbyDevices.length,
@@ -366,7 +406,7 @@ class AppController extends ChangeNotifier {
     } catch (error) {
       await _logTransportEvent(
         'startup',
-        'Initial health sweep failed',
+        'Initial desktop health sweep failed',
         data: <String, Object?>{
           'durationMs': stopwatch.elapsedMilliseconds,
           'error': error.toString(),
@@ -386,6 +426,7 @@ class AppController extends ChangeNotifier {
       ..nicknameProvider = () {
         return localNickname;
       }
+      ..pinSettingsProvider = _transferPinSettings
       ..appVersion = _appVersion;
 
     _transferClient.onTrace ??= (message, {data}) {
@@ -464,17 +505,17 @@ class AppController extends ChangeNotifier {
           _activePort = port;
           unawaited(
             _logTransportEvent(
-            'transfer-server',
-            'Transfer server started',
-            data: <String, Object?>{
-              'port': port,
-              'securePort': _transferServer.securePort,
-              'hasIpv4Listener': _transferServer.hasIpv4Listener,
-              'hasIpv6Listener': _transferServer.hasIpv6Listener,
-              'hasSecureListener': _transferServer.hasSecureListener,
-              'fingerprint': identity.fingerprint,
-            },
-          ),
+              'transfer-server',
+              'Transfer server started',
+              data: <String, Object?>{
+                'port': port,
+                'securePort': _transferServer.securePort,
+                'hasIpv4Listener': _transferServer.hasIpv4Listener,
+                'hasIpv6Listener': _transferServer.hasIpv6Listener,
+                'hasSecureListener': _transferServer.hasSecureListener,
+                'fingerprint': identity.fingerprint,
+              },
+            ),
           );
           _identity = identity;
           return;
@@ -543,6 +584,52 @@ class AppController extends ChangeNotifier {
     if (completedOnboarding) {
       unawaited(ensureNetworkWarmupStarted());
     }
+  }
+
+  Future<void> saveOnboardingProfile({
+    required String nickname,
+    required String transferPin,
+  }) async {
+    final value = nickname.trim();
+    if (value.isEmpty || !TransferPinService.isValidPin(transferPin)) {
+      return;
+    }
+    final completedOnboarding = needsOnboarding;
+    final pinSettings = await TransferPinService.createSettingsAsync(
+      transferPin,
+    );
+    _preferences = _preferences.copyWith(
+      nickname: value,
+      transferPinAlgorithm: pinSettings.algorithm,
+      transferPinSaltBase64: pinSettings.saltBase64,
+      transferPinHashBase64: pinSettings.hashBase64,
+      transferPinIterations: pinSettings.iterations,
+      transferPinPolicyVersion: TransferPinService.currentPolicyVersion,
+    );
+    await _store.savePreferences(_preferences);
+    notifyListeners();
+    if (completedOnboarding) {
+      unawaited(ensureNetworkWarmupStarted());
+    }
+  }
+
+  Future<bool> saveTransferPin(String transferPin) async {
+    if (!TransferPinService.isValidPin(transferPin)) {
+      return false;
+    }
+    final pinSettings = await TransferPinService.createSettingsAsync(
+      transferPin,
+    );
+    _preferences = _preferences.copyWith(
+      transferPinAlgorithm: pinSettings.algorithm,
+      transferPinSaltBase64: pinSettings.saltBase64,
+      transferPinHashBase64: pinSettings.hashBase64,
+      transferPinIterations: pinSettings.iterations,
+      transferPinPolicyVersion: TransferPinService.currentPolicyVersion,
+    );
+    await _store.savePreferences(_preferences);
+    notifyListeners();
+    return true;
   }
 
   Future<void> setThemePreference(AppThemePreference preference) async {
@@ -631,6 +718,13 @@ class AppController extends ChangeNotifier {
     if (_isNetworkWarmupInProgress) {
       return;
     }
+    if (_hasActiveTransportWork) {
+      await _logTransportEvent(
+        'discovery',
+        'Manual discovery refresh skipped during active transfer work',
+      );
+      return;
+    }
     await _performDiscoveryRefresh(
       restartBackend: !_discoveryService.isRunning,
       forcePeerAvailability: true,
@@ -660,14 +754,15 @@ class AppController extends ChangeNotifier {
     if (_identity == null || _isDiscoveryForegroundPaused) {
       return;
     }
+    if (_hasActiveTransportWork) {
+      return;
+    }
     if (!_discoveryService.isRunning) {
       await restartDiscovery();
       return;
     }
-    final shouldUsePresenceBurst =
-        _discoveredNearbyDevices.isEmpty && _nearbyDevices.isEmpty;
-    await _scanNearbyDevices(burstAnnounce: shouldUsePresenceBurst);
-    await _runForegroundHealthSweepIfNeeded();
+    await _scanNearbyDevices();
+    await _runDesktopHealthSweepIfNeeded();
     await _runDiscoveryWatchdogIfNeeded();
   }
 
@@ -678,6 +773,14 @@ class AppController extends ChangeNotifier {
     if (_identity == null) {
       return;
     }
+    if (_hasActiveTransportWork) {
+      await _logTransportEvent(
+        'discovery',
+        'Discovery refresh skipped during active transfer work',
+        data: <String, Object?>{'restartBackend': restartBackend},
+      );
+      return;
+    }
     if (restartBackend || !_discoveryService.isRunning) {
       await _startOrRestartDiscovery();
     }
@@ -685,7 +788,7 @@ class AppController extends ChangeNotifier {
       forcePeerAvailability: forcePeerAvailability,
       burstAnnounce: true,
     );
-    await _runForegroundHealthSweepIfNeeded();
+    await _runDesktopHealthSweepIfNeeded(force: true);
   }
 
   Future<int> addDraftItemsFromType(TransferPayloadType type) async {
@@ -702,10 +805,7 @@ class AppController extends ChangeNotifier {
       await _logTransportEvent(
         'picker',
         'Content picker failed',
-        data: <String, Object?>{
-          'contentType': type.name,
-          ...error.toLogData(),
-        },
+        data: <String, Object?>{'contentType': type.name, ...error.toLogData()},
       );
       rethrow;
     } catch (error) {
@@ -782,15 +882,21 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<SendAttemptResult> sendDraftToDevice(String deviceId) async {
+  Future<SendAttemptResult> sendDraftToDevice(
+    String deviceId, {
+    required String receiverPin,
+    bool trustConfirmed = false,
+  }) async {
     if (_identity == null) {
       return const SendAttemptResult.failure(SendFailureReason.unknown);
+    }
+    if (!TransferPinService.isValidPin(receiverPin)) {
+      return const SendAttemptResult.failure(SendFailureReason.invalidPin);
     }
     if (_sendDraft.isSending) {
       return const SendAttemptResult.failure(SendFailureReason.busy);
     }
 
-    triggerDiscoveryScan();
     final recipient = _nearbyDevices.cast<DeviceProfile?>().firstWhere(
       (item) => item?.deviceId == deviceId,
       orElse: () => null,
@@ -813,7 +919,13 @@ class AppController extends ChangeNotifier {
       return SendAttemptResult.failure(precheck);
     }
 
-    final availability = await _ensurePeerAvailability(recipient!, force: true);
+    final availability =
+        _freshReadyAvailabilityForSend(recipient!) ??
+        await _ensurePeerAvailability(
+          recipient,
+          force: true,
+          replaceInFlight: true,
+        );
     final availabilityFailure = _sendFailureForAvailability(availability);
     if (availabilityFailure != null) {
       unawaited(
@@ -834,6 +946,13 @@ class AppController extends ChangeNotifier {
         availabilityFailure,
         details: availability.errorMessage,
       );
+    }
+    final trustFailure = _sendFailureForPeerTrust(
+      recipient,
+      trustConfirmed: trustConfirmed,
+    );
+    if (trustFailure != null) {
+      return trustFailure;
     }
 
     final transferId = '${_uuid.v4()}_${deviceId.substring(0, 6)}';
@@ -872,6 +991,7 @@ class AppController extends ChangeNotifier {
     final record = await _transferClient.sendTransfer(
       recipient: recipient,
       offer: offer,
+      receiverPin: receiverPin,
       onProgress: _upsertTransferProgress,
       isCanceled: () => _cancelTransferByKey[cancelKey] ?? false,
       onDiagnostics: _upsertTransferDiagnostics,
@@ -896,9 +1016,11 @@ class AppController extends ChangeNotifier {
     );
 
     if (record.status == TransferStatus.completed) {
+      await _trustPeerAfterVerifiedTransfer(recipient);
       await _persistHistory();
       _sendDraft = const SendDraft.empty();
       notifyListeners();
+      _maybePauseAfterDeferredBackgroundTransport();
       return const SendAttemptResult.success();
     }
 
@@ -909,15 +1031,44 @@ class AppController extends ChangeNotifier {
     );
     _sendDraft = _sendDraft.copyWith(isSending: false);
     notifyListeners();
+    _maybePauseAfterDeferredBackgroundTransport();
     return SendAttemptResult.failure(
       failureReason,
       details: record.errorMessage,
     );
   }
 
+  PeerAvailabilitySnapshot? _freshReadyAvailabilityForSend(
+    DeviceProfile recipient,
+  ) {
+    final existing =
+        _peerAvailabilityById[recipient.deviceId] ??
+        _availabilityFromVerifiedLease(recipient.deviceId);
+    if (existing == null || existing.status != PeerAvailabilityStatus.ready) {
+      return null;
+    }
+    final hasRoute =
+        (existing.selectedAddress ?? '').trim().isNotEmpty &&
+        (existing.selectedPort ?? 0) > 0;
+    if (!hasRoute) {
+      return null;
+    }
+    final lease = _transportVerifiedPeerLeases[recipient.deviceId];
+    if (lease != null && _isFreshTransportLease(lease)) {
+      return existing;
+    }
+    if (DateTime.now().difference(existing.updatedAt) <=
+        const Duration(seconds: 30)) {
+      return existing;
+    }
+    return null;
+  }
+
   Future<void> sendItems({
     required List<DeviceProfile> recipients,
     required List<TransferItem> items,
+    Map<String, String> receiverPinsByDeviceId = const <String, String>{},
+    Set<String> trustConfirmedDeviceIds = const <String>{},
   }) async {
     if (recipients.isEmpty || items.isEmpty || _identity == null) {
       return;
@@ -925,6 +1076,10 @@ class AppController extends ChangeNotifier {
 
     final pending = <Future<TransferRecord>>[];
     for (final recipient in recipients) {
+      final receiverPin = receiverPinsByDeviceId[recipient.deviceId];
+      if (receiverPin == null || !TransferPinService.isValidPin(receiverPin)) {
+        continue;
+      }
       final availability = await _ensurePeerAvailability(
         recipient,
         force: true,
@@ -953,12 +1108,29 @@ class AppController extends ChangeNotifier {
         );
         continue;
       }
+      final trustFailure = _sendFailureForPeerTrust(
+        recipient,
+        trustConfirmed: trustConfirmedDeviceIds.contains(recipient.deviceId),
+      );
+      if (trustFailure != null) {
+        pending.add(
+          Future<TransferRecord>.value(
+            _failedRecordForTrust(
+              recipient: recipient,
+              offer: offer,
+              result: trustFailure,
+            ),
+          ),
+        );
+        continue;
+      }
       final cancelKey = _cancelKey(transferId, recipient.deviceId);
       _cancelTransferByKey[cancelKey] = false;
       pending.add(
         _transferClient.sendTransfer(
           recipient: recipient,
           offer: offer,
+          receiverPin: receiverPin,
           onProgress: _upsertTransferProgress,
           isCanceled: () => _cancelTransferByKey[cancelKey] ?? false,
           onDiagnostics: _upsertTransferDiagnostics,
@@ -969,11 +1141,18 @@ class AppController extends ChangeNotifier {
     }
 
     final records = await Future.wait(pending);
+    final recipientsById = <String, DeviceProfile>{
+      for (final recipient in recipients) recipient.deviceId: recipient,
+    };
     for (final record in records) {
       _addRecord(record);
       _cancelTransferByKey.remove(
         _cancelKey(record.transferId, record.peerDeviceId),
       );
+      final peer = recipientsById[record.peerDeviceId];
+      if (record.status == TransferStatus.completed && peer != null) {
+        await _trustPeerAfterVerifiedTransfer(peer);
+      }
     }
     await _persistHistory();
   }
@@ -981,6 +1160,9 @@ class AppController extends ChangeNotifier {
   void cancelTransfer(TransferProgress progress) {
     final key = _cancelKey(progress.transferId, progress.peerDeviceId);
     _cancelTransferByKey[key] = true;
+    if (progress.isIncoming) {
+      unawaited(_transferServer.cancelIncoming(progress.transferId));
+    }
     _upsertTransferProgress(
       progress.copyWith(
         status: TransferStatus.canceled,
@@ -1009,13 +1191,22 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<void> retryTransfer(TransferRecord record) async {
+  Future<SendAttemptResult> retryTransfer(
+    TransferRecord record, {
+    required String receiverPin,
+    bool trustConfirmed = false,
+  }) async {
+    if (!TransferPinService.isValidPin(receiverPin)) {
+      return const SendAttemptResult.failure(SendFailureReason.invalidPin);
+    }
     final recipient = _nearbyDevices.cast<DeviceProfile?>().firstWhere(
       (item) => item?.deviceId == record.peerDeviceId,
       orElse: () => null,
     );
     if (record.isIncoming || recipient == null) {
-      return;
+      return const SendAttemptResult.failure(
+        SendFailureReason.recipientOffline,
+      );
     }
     final reusableItems = <TransferItem>[];
     for (final item in record.items) {
@@ -1029,12 +1220,19 @@ class AppController extends ChangeNotifier {
       }
     }
     if (reusableItems.isEmpty) {
-      return;
+      return const SendAttemptResult.failure(
+        SendFailureReason.missingLocalFile,
+      );
     }
     await sendItems(
       recipients: <DeviceProfile>[recipient],
       items: reusableItems,
+      receiverPinsByDeviceId: <String, String>{recipient.deviceId: receiverPin},
+      trustConfirmedDeviceIds: trustConfirmed
+          ? <String>{recipient.deviceId}
+          : const <String>{},
     );
+    return const SendAttemptResult.success();
   }
 
   String displayNameForDevice(DeviceProfile device) {
@@ -1047,7 +1245,49 @@ class AppController extends ChangeNotifier {
     return device.nickname;
   }
 
-  Future<IncomingActionResult> acceptIncoming(String transferId) async {
+  DeviceProfile? knownProfileForDeviceId(String deviceId) {
+    return _bestKnownProfileForDeviceId(deviceId);
+  }
+
+  PeerTrustStatus trustStatusForDevice(DeviceProfile device) {
+    return PeerTrustService.statusForDevice(
+      device: device,
+      trustedPeer: _trustedPeersById[device.deviceId],
+    );
+  }
+
+  String securityCodeForDevice(DeviceProfile device) {
+    return shortSecurityCodeForFingerprint(device.certFingerprint);
+  }
+
+  String securityCodeForIncomingSession(IncomingTransferSession session) {
+    return shortSecurityCodeForFingerprint(session.senderFingerprint);
+  }
+
+  bool requiresFirstTransferConfirmation(DeviceProfile device) {
+    return trustStatusForDevice(device) == PeerTrustStatus.untrusted;
+  }
+
+  bool incomingRequiresFirstTransferConfirmation(
+    IncomingTransferSession session,
+  ) {
+    return trustStatusForDevice(_profileForIncomingSession(session)) ==
+        PeerTrustStatus.untrusted;
+  }
+
+  Future<void> forgetTrustedPeer(String deviceId) async {
+    if (_trustedPeersById.remove(deviceId) == null) {
+      return;
+    }
+    await _store.saveTrustedPeers(_trustedPeersById.values.toList());
+    _syncPeerAvailability(_nearbyDevices, force: true);
+    notifyListeners();
+  }
+
+  Future<IncomingActionResult> acceptIncoming(
+    String transferId, {
+    bool trustConfirmed = false,
+  }) async {
     final session = _incomingSessionsById[transferId];
     if (session == null) {
       return const IncomingActionResult.failure(
@@ -1057,6 +1297,23 @@ class AppController extends ChangeNotifier {
     if (!session.isPending) {
       return const IncomingActionResult.failure(
         'This transfer request is no longer pending.',
+      );
+    }
+    final senderProfile = _profileForIncomingSession(session);
+    final trustStatus = trustStatusForDevice(senderProfile);
+    if (trustStatus == PeerTrustStatus.identityChanged) {
+      return const IncomingActionResult.failure(
+        'This device identity changed. Forget the old trusted device and pair again.',
+      );
+    }
+    if (trustStatus == PeerTrustStatus.missingFingerprint) {
+      return const IncomingActionResult.failure(
+        'This sender did not provide a secure device identity.',
+      );
+    }
+    if (trustStatus == PeerTrustStatus.untrusted && !trustConfirmed) {
+      return const IncomingActionResult.failure(
+        'Confirm that the security codes match before accepting.',
       );
     }
     unawaited(
@@ -1073,9 +1330,12 @@ class AppController extends ChangeNotifier {
     );
     try {
       await _transferServer.acceptIncoming(transferId);
+      if (trustStatus == PeerTrustStatus.untrusted) {
+        _pendingIncomingTrustByTransferId[transferId] = senderProfile;
+      }
       _touchTransportVerifiedPeerLease(
         deviceId: session.senderDeviceId,
-        fallbackProfile: _profileForIncomingSession(session),
+        fallbackProfile: senderProfile,
         selectedAddress: session.remoteAddress,
         addressFamily: _addressFamilyFor(session.remoteAddress),
       );
@@ -1181,6 +1441,10 @@ class AppController extends ChangeNotifier {
     if (existing != null) {
       return existing;
     }
+    final leaseAvailability = _availabilityFromVerifiedLease(deviceId);
+    if (leaseAvailability != null) {
+      return leaseAvailability;
+    }
     final device = _nearbyDevices.cast<DeviceProfile?>().firstWhere(
       (item) => item?.deviceId == deviceId,
       orElse: () => null,
@@ -1197,15 +1461,17 @@ class AppController extends ChangeNotifier {
     return _diagnosticsByContextId[transferId];
   }
 
-  Future<void> refreshPeerAvailability(String deviceId) async {
+  Future<PeerAvailabilitySnapshot?> refreshPeerAvailability(
+    String deviceId,
+  ) async {
     final device = _nearbyDevices.cast<DeviceProfile?>().firstWhere(
       (item) => item?.deviceId == deviceId,
       orElse: () => null,
     );
     if (device == null) {
-      return;
+      return null;
     }
-    await _ensurePeerAvailability(device, force: true, replaceInFlight: true);
+    return _ensurePeerAvailability(device, force: true, replaceInFlight: true);
   }
 
   void _upsertIncomingTransferSession(IncomingTransferSession session) {
@@ -1227,10 +1493,16 @@ class AppController extends ChangeNotifier {
       });
     }
     notifyListeners();
+    _maybePauseAfterDeferredBackgroundTransport();
   }
 
   void _upsertTransferProgress(TransferProgress progress) {
     final key = _progressKey(progress);
+    final existing = _activeTransfers[key];
+    if (existing?.status == TransferStatus.canceled &&
+        progress.status != TransferStatus.canceled) {
+      return;
+    }
     _activeTransfers[key] = progress;
     if (progress.isIncoming && _isTerminal(progress.status)) {
       _incomingSessionsById.remove(progress.transferId);
@@ -1244,11 +1516,20 @@ class AppController extends ChangeNotifier {
       });
     }
     notifyListeners();
+    _maybePauseAfterDeferredBackgroundTransport();
   }
 
   void _addRecord(TransferRecord record) {
     if (record.isIncoming) {
       _incomingSessionsById.remove(record.transferId);
+      final pendingTrust = _pendingIncomingTrustByTransferId.remove(
+        record.transferId,
+      );
+      if (record.status == TransferStatus.completed && pendingTrust != null) {
+        unawaited(_trustPeerAfterVerifiedTransfer(pendingTrust));
+      }
+    } else if (_isTerminal(record.status)) {
+      _pendingIncomingTrustByTransferId.remove(record.transferId);
     }
     _history = <TransferRecord>[record, ..._history];
     unawaited(_persistHistory());
@@ -1423,6 +1704,16 @@ class AppController extends ChangeNotifier {
       (key, _) => !activeIds.contains(key),
     );
     _refreshComputedDiscoveryHealth();
+    if (_hasActiveTransportWork) {
+      unawaited(
+        _logTransportEvent(
+          'peer-availability',
+          'Peer availability probing paused during active transfer work',
+          data: <String, Object?>{'deviceCount': devices.length},
+        ),
+      );
+      return;
+    }
     for (final device in devices) {
       unawaited(
         _ensurePeerAvailability(device, force: force, replaceInFlight: force),
@@ -1430,31 +1721,43 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _runForegroundHealthSweepIfNeeded() async {
-    if (_identity == null ||
+  bool get _shouldRunDesktopHealthSweep {
+    return !Platform.isAndroid && !Platform.isIOS;
+  }
+
+  Future<void> _runDesktopHealthSweepIfNeeded({bool force = false}) async {
+    if (!_shouldRunDesktopHealthSweep ||
+        _identity == null ||
         _isDiscoveryForegroundPaused ||
-        _zeroPeerHealthSweepInFlight) {
+        _hasActiveTransportWork ||
+        _desktopHealthSweepInFlight) {
       return;
     }
     final now = DateTime.now();
-    final sweepCooldown =
-        _nearbyDevices.isEmpty && _discoveredNearbyDevices.isEmpty
-        ? _zeroPeerHealthSweepCooldown
-        : _supplementalHealthSweepCooldown;
-    if (_lastZeroPeerHealthSweepAt != null &&
-        now.difference(_lastZeroPeerHealthSweepAt!) < sweepCooldown) {
+    if (!force &&
+        _lastDesktopHealthSweepAt != null &&
+        now.difference(_lastDesktopHealthSweepAt!) <
+            _desktopHealthSweepCooldown) {
       return;
     }
 
-    _zeroPeerHealthSweepInFlight = true;
-    _lastZeroPeerHealthSweepAt = now;
+    _desktopHealthSweepInFlight = true;
+    _lastDesktopHealthSweepAt = now;
     try {
       final interfaces = await _localNetworkPlatformService
           .listActiveInterfaces();
-      final targets = _buildZeroPeerHealthSweepTargets(interfaces);
+      final targets = _buildDesktopHealthSweepTargets(interfaces);
       if (targets.isEmpty) {
         return;
       }
+      await _logTransportEvent(
+        'discovery',
+        'Desktop HTTPS health sweep started',
+        data: <String, Object?>{
+          'targetCount': targets.length,
+          'interfaceCount': interfaces.length,
+        },
+      );
 
       final localDeviceId = _identity?.deviceId;
       final discovered = <String, TransferHealthPeerSnapshot>{};
@@ -1467,38 +1770,37 @@ class AppController extends ChangeNotifier {
           final snapshot = await _transferClient.discoverPeerAt(
             address: current.address,
             port: current.port,
-            useTls: true,
           );
-          if (snapshot == null) {
+          if (snapshot == null ||
+              snapshot.profile.deviceId == localDeviceId ||
+              discovered.containsKey(snapshot.profile.deviceId)) {
             continue;
           }
-          if (snapshot.profile.deviceId == localDeviceId) {
-            continue;
-          }
-          final wasNewPeer =
-              discovered.putIfAbsent(
-                snapshot.profile.deviceId,
-                () => snapshot,
-              ) ==
-              snapshot;
-          if (!wasNewPeer) {
-            continue;
-          }
-          final promoted = _promoteHealthSweepPeer(snapshot);
+          discovered[snapshot.profile.deviceId] = snapshot;
+          final promoted = _promoteDesktopHealthSweepPeer(snapshot);
           if (promoted) {
             notifyListeners();
           }
         }
       }
 
-      final workerCount = targets.length < _zeroPeerHealthSweepConcurrency
+      final workerCount = targets.length < _desktopHealthSweepConcurrency
           ? targets.length
-          : _zeroPeerHealthSweepConcurrency;
+          : _desktopHealthSweepConcurrency;
       await Future.wait(
         List<Future<void>>.generate(workerCount, (_) => worker()),
       );
+      _refreshComputedDiscoveryHealth();
+      await _logTransportEvent(
+        'discovery',
+        'Desktop HTTPS health sweep completed',
+        data: <String, Object?>{
+          'targetCount': targets.length,
+          'peerCount': discovered.length,
+        },
+      );
     } finally {
-      _zeroPeerHealthSweepInFlight = false;
+      _desktopHealthSweepInFlight = false;
     }
   }
 
@@ -1507,7 +1809,13 @@ class AppController extends ChangeNotifier {
     bool force = false,
     bool replaceInFlight = false,
   }) async {
-    final existing = _peerAvailabilityById[device.deviceId];
+    final existing =
+        _peerAvailabilityById[device.deviceId] ??
+        _availabilityFromVerifiedLease(device.deviceId);
+    if (existing != null &&
+        !_peerAvailabilityById.containsKey(device.deviceId)) {
+      _peerAvailabilityById[device.deviceId] = existing;
+    }
     final candidateIdentityChanged =
         existing == null ||
         _hasMaterialPeerAvailabilityTargetChange(device, existing);
@@ -1637,23 +1945,35 @@ class AppController extends ChangeNotifier {
     }
 
     try {
-      final snapshot = await _transferClient.probeRecipient(
+      final probedSnapshot = await _transferClient.probeRecipient(
         recipient: device,
         preferredAvailability: existing,
+      );
+      final stabilizedSnapshot = _stableAvailabilityForTransientFailure(
+        device: device,
+        existing: existing,
+        failed: probedSnapshot,
+      );
+      final snapshot = _availabilityWithTrustPolicy(
+        device,
+        stabilizedSnapshot ?? probedSnapshot,
       );
       if (_isCurrentPeerAvailabilityProbeGeneration(
         device.deviceId,
         generation,
       )) {
         _peerAvailabilityById[device.deviceId] = snapshot;
-        _touchTransportVerifiedPeerLease(
-          deviceId: snapshot.deviceId,
-          fallbackProfile: device,
-          selectedAddress: snapshot.selectedAddress,
-          selectedPort: snapshot.selectedPort,
-          addressFamily: snapshot.addressFamily,
-          timestamp: snapshot.updatedAt,
-        );
+        if (snapshot.status == PeerAvailabilityStatus.ready &&
+            stabilizedSnapshot == null) {
+          _touchTransportVerifiedPeerLease(
+            deviceId: snapshot.deviceId,
+            fallbackProfile: device,
+            selectedAddress: snapshot.selectedAddress,
+            selectedPort: snapshot.selectedPort,
+            addressFamily: snapshot.addressFamily,
+            timestamp: snapshot.updatedAt,
+          );
+        }
         _discoveryHealth = _discoveryHealth.copyWith(
           resolvedAddressFamily:
               snapshot.addressFamily ?? _discoveryHealth.resolvedAddressFamily,
@@ -1708,16 +2028,27 @@ class AppController extends ChangeNotifier {
         appVersion: device.appVersion,
         capabilities: device.capabilities,
       );
+      final stabilizedSnapshot = _stableAvailabilityForTransientFailure(
+        device: device,
+        existing: existing,
+        failed: failed,
+      );
+      final snapshot = _availabilityWithTrustPolicy(
+        device,
+        stabilizedSnapshot ?? failed,
+      );
       if (_isCurrentPeerAvailabilityProbeGeneration(
         device.deviceId,
         generation,
       )) {
-        _peerAvailabilityById[device.deviceId] = failed;
+        _peerAvailabilityById[device.deviceId] = snapshot;
         _refreshComputedDiscoveryHealth();
         unawaited(
           _logTransportEvent(
             'peer-availability',
-            'Peer availability probe failed',
+            stabilizedSnapshot == null
+                ? 'Peer availability probe failed'
+                : 'Preserved recent verified route after transient probe failure',
             data: <String, Object?>{
               'deviceId': device.deviceId,
               'nickname': device.nickname,
@@ -1725,6 +2056,9 @@ class AppController extends ChangeNotifier {
                   .map((item) => item.name)
                   .toList(growable: false),
               'candidateAddresses': device.ipAddresses,
+              'selectedAddress': snapshot.selectedAddress,
+              'selectedPort': snapshot.selectedPort,
+              'status': snapshot.status.name,
               'error': error.toString(),
             },
           ),
@@ -1742,7 +2076,7 @@ class AppController extends ChangeNotifier {
           ),
         );
       }
-      return failed;
+      return snapshot;
     } finally {
       if (_isCurrentPeerAvailabilityProbeGeneration(
         device.deviceId,
@@ -1755,6 +2089,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> pauseDiscoveryForBackground() async {
+    _isMobileBackgrounded = true;
     if (!_initialized ||
         _isDiscoveryForegroundPaused ||
         _isNetworkWarmupInProgress ||
@@ -1762,11 +2097,35 @@ class AppController extends ChangeNotifier {
         _identity == null) {
       return;
     }
+    if (_hasActiveTransportWork) {
+      final wasDeferred = _backgroundPauseDeferredForTransport;
+      _backgroundPauseDeferredForTransport = true;
+      await _localNetworkPlatformService.acquireMulticastLock();
+      await _localNetworkPlatformService.acquireWifiLock();
+      if (!wasDeferred) {
+        unawaited(
+          _logTransportEvent(
+            'startup',
+            'Background discovery pause deferred for active transport work',
+            data: <String, Object?>{
+              'activeTransferCount': _activeTransfers.values
+                  .where((item) => !_isTerminal(item.status))
+                  .length,
+              'incomingSessionCount': _incomingSessionsById.length,
+              'sendDraftSending': _sendDraft.isSending,
+            },
+          ),
+        );
+      }
+      return;
+    }
+    _backgroundPauseDeferredForTransport = false;
     _isDiscoveryForegroundPaused = true;
     _lastHealthyDiscoveryAt = null;
     _watchdogSoftRefreshPendingHardRestart = false;
     await _discoveryService.pauseForBackground();
     await _localNetworkPlatformService.releaseMulticastLock();
+    await _localNetworkPlatformService.releaseWifiLock();
     _peerAvailabilityProbeFutures.clear();
     _peerAvailabilityProbeGenerations.clear();
     _discoveredNearbyDevices = const <DeviceProfile>[];
@@ -1776,6 +2135,8 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> resumeDiscoveryFromForeground() async {
+    _isMobileBackgrounded = false;
+    _backgroundPauseDeferredForTransport = false;
     if (!_initialized) {
       return;
     }
@@ -1788,12 +2149,23 @@ class AppController extends ChangeNotifier {
     }
     _isDiscoveryForegroundPaused = false;
     await _localNetworkPlatformService.acquireMulticastLock();
+    await _localNetworkPlatformService.acquireWifiLock();
     await _discoveryService.resumeFromForeground();
     if (_discoveryService.isRunning) {
       await refreshNearbyDevices();
       return;
     }
     await restartDiscovery();
+  }
+
+  void _maybePauseAfterDeferredBackgroundTransport() {
+    if (!_isMobileBackgrounded ||
+        !_backgroundPauseDeferredForTransport ||
+        _hasActiveTransportWork) {
+      return;
+    }
+    _backgroundPauseDeferredForTransport = false;
+    unawaited(pauseDiscoveryForBackground());
   }
 
   Duration _peerAvailabilityProbeCooldownFor(PeerAvailabilityStatus? status) {
@@ -1849,7 +2221,16 @@ class AppController extends ChangeNotifier {
   }
 
   bool _shouldProbePeerAvailabilityFromServerHint(DeviceProfile device) {
+    if (_hasActiveTransportWork) {
+      return false;
+    }
     final existing = _peerAvailabilityById[device.deviceId];
+    final lease = _transportVerifiedPeerLeases[device.deviceId];
+    if (lease != null &&
+        _isFreshTransportLease(lease) &&
+        existing?.status == PeerAvailabilityStatus.ready) {
+      return false;
+    }
     if (existing == null) {
       return true;
     }
@@ -1911,6 +2292,27 @@ class AppController extends ChangeNotifier {
         a.addressFamily == b.addressFamily;
   }
 
+  PeerAvailabilitySnapshot _availabilityWithTrustPolicy(
+    DeviceProfile device,
+    PeerAvailabilitySnapshot snapshot,
+  ) {
+    if (snapshot.status != PeerAvailabilityStatus.ready) {
+      return snapshot;
+    }
+    return switch (trustStatusForDevice(device)) {
+      PeerTrustStatus.trusted || PeerTrustStatus.untrusted => snapshot,
+      PeerTrustStatus.missingFingerprint => snapshot.copyWith(
+        status: PeerAvailabilityStatus.securityFailure,
+        errorMessage: 'Receiver did not provide a secure device identity.',
+      ),
+      PeerTrustStatus.identityChanged => snapshot.copyWith(
+        status: PeerAvailabilityStatus.securityFailure,
+        errorMessage:
+            'Device identity changed. Forget the old trusted device and pair again.',
+      ),
+    };
+  }
+
   SendFailureReason? _sendFailureForAvailability(
     PeerAvailabilitySnapshot availability,
   ) {
@@ -1924,6 +2326,29 @@ class AppController extends ChangeNotifier {
         SendFailureReason.transferUnreachable,
       PeerAvailabilityStatus.checking => SendFailureReason.transferUnreachable,
       PeerAvailabilityStatus.unknown => SendFailureReason.transferUnreachable,
+    };
+  }
+
+  SendAttemptResult? _sendFailureForPeerTrust(
+    DeviceProfile peer, {
+    required bool trustConfirmed,
+  }) {
+    return switch (trustStatusForDevice(peer)) {
+      PeerTrustStatus.trusted => null,
+      PeerTrustStatus.untrusted when trustConfirmed => null,
+      PeerTrustStatus.untrusted => const SendAttemptResult.failure(
+        SendFailureReason.certificateMismatch,
+        details: 'Confirm that the security codes match before sending.',
+      ),
+      PeerTrustStatus.missingFingerprint => const SendAttemptResult.failure(
+        SendFailureReason.certificateMismatch,
+        details: 'Receiver did not provide a secure device identity.',
+      ),
+      PeerTrustStatus.identityChanged => const SendAttemptResult.failure(
+        SendFailureReason.certificateMismatch,
+        details:
+            'Device identity changed. Forget the old trusted device and pair again.',
+      ),
     };
   }
 
@@ -1978,6 +2403,46 @@ class AppController extends ChangeNotifier {
       endedAt: now,
       stage: TransferStage.failed,
       terminalReason: terminalReason,
+      errorMessage: errorMessage,
+    );
+  }
+
+  TransferRecord _failedRecordForTrust({
+    required DeviceProfile recipient,
+    required TransferOffer offer,
+    required SendAttemptResult result,
+  }) {
+    final now = DateTime.now();
+    final errorMessage = result.details ?? 'Security verification failed.';
+    _upsertTransferDiagnostics(
+      TransferDiagnosticsSnapshot(
+        contextId: offer.transferId,
+        peerDeviceId: recipient.deviceId,
+        peerNickname: recipient.nickname,
+        isIncoming: false,
+        stage: TransferStage.failed,
+        updatedAt: now,
+        selectedAddress: recipient.ipAddress,
+        selectedPort: recipient.securePort ?? recipient.activePort,
+        addressFamily: recipient.preferredAddressFamily,
+        terminalReason: TransferTerminalReason.tlsVerificationFailed,
+        errorMessage: errorMessage,
+        logFilePath: _transportLogService.logFilePath,
+      ),
+    );
+    return TransferRecord(
+      transferId: offer.transferId,
+      peerDeviceId: recipient.deviceId,
+      peerNickname: recipient.nickname,
+      isIncoming: false,
+      items: offer.items,
+      status: TransferStatus.failed,
+      totalBytes: offer.totalBytes,
+      transferredBytes: 0,
+      startedAt: now,
+      endedAt: now,
+      stage: TransferStage.failed,
+      terminalReason: TransferTerminalReason.tlsVerificationFailed,
       errorMessage: errorMessage,
     );
   }
@@ -2147,15 +2612,15 @@ class AppController extends ChangeNotifier {
     final effectiveSelectedPort = canPreserveExistingSelectedAddress
         ? existing.selectedPort
         : selectedPort ??
-            existing?.selectedPort ??
-            _peerAvailabilityById[deviceId]?.selectedPort ??
-            bestProfile.activePort;
+              existing?.selectedPort ??
+              _peerAvailabilityById[deviceId]?.selectedPort ??
+              bestProfile.activePort;
     final effectiveAddressFamily = canPreserveExistingSelectedAddress
         ? existing.addressFamily
         : addressFamily ??
-            existing?.addressFamily ??
-            _peerAvailabilityById[deviceId]?.addressFamily ??
-            bestProfile.preferredAddressFamily;
+              existing?.addressFamily ??
+              _peerAvailabilityById[deviceId]?.addressFamily ??
+              bestProfile.preferredAddressFamily;
     final lease =
         (existing ??
                 TransportVerifiedPeerLease(
@@ -2175,11 +2640,112 @@ class AppController extends ChangeNotifier {
         !_sameTransportLeaseIdentity(existing, lease) ||
         !_sameProfileIdentity(existing.profile, bestProfile);
     _transportVerifiedPeerLeases[deviceId] = lease;
+    final leaseAvailability = _availabilityFromVerifiedLease(
+      deviceId,
+      lease: lease,
+      updatedAt: now,
+    );
+    final currentAvailability = _peerAvailabilityById[deviceId];
+    if (leaseAvailability != null &&
+        (currentAvailability == null ||
+            currentAvailability.status == PeerAvailabilityStatus.unknown ||
+            currentAvailability.status == PeerAvailabilityStatus.checking ||
+            currentAvailability.status == PeerAvailabilityStatus.unreachable)) {
+      _peerAvailabilityById[deviceId] = leaseAvailability;
+    }
     if (materiallyChanged) {
       _rebuildVisibleNearbyDevices();
       _refreshComputedDiscoveryHealth();
     }
     return materiallyChanged;
+  }
+
+  bool _isFreshTransportLease(TransportVerifiedPeerLease lease) {
+    return DateTime.now().difference(lease.lastSuccessfulActivityAt) <=
+        _transportVerifiedPeerLeaseDuration;
+  }
+
+  PeerAvailabilitySnapshot? _availabilityFromVerifiedLease(
+    String deviceId, {
+    TransportVerifiedPeerLease? lease,
+    DateTime? updatedAt,
+  }) {
+    final transportLease = lease ?? _transportVerifiedPeerLeases[deviceId];
+    if (transportLease == null || !_isFreshTransportLease(transportLease)) {
+      return null;
+    }
+    final profile =
+        _bestKnownProfileForDeviceId(deviceId) ?? transportLease.profile;
+    final candidateAddresses = _canonicalAddressSet(<String>[
+      transportLease.selectedAddress ?? '',
+      profile.ipAddress,
+      ...profile.ipAddresses,
+      transportLease.profile.ipAddress,
+      ...transportLease.profile.ipAddresses,
+    ]);
+    final selectedAddress =
+        transportLease.selectedAddress ??
+        _preferredAddressForFamily(
+          candidateAddresses,
+          transportLease.addressFamily ?? profile.preferredAddressFamily,
+        ) ??
+        profile.ipAddress;
+    final selectedPort =
+        transportLease.selectedPort ?? profile.securePort ?? profile.activePort;
+    if (selectedAddress.trim().isEmpty || selectedPort <= 0) {
+      return null;
+    }
+    return _availabilityWithTrustPolicy(
+      profile,
+      PeerAvailabilitySnapshot(
+        deviceId: deviceId,
+        nickname: profile.nickname,
+        status: PeerAvailabilityStatus.ready,
+        updatedAt: updatedAt ?? transportLease.lastSuccessfulActivityAt,
+        selectedAddress: selectedAddress,
+        selectedPort: selectedPort,
+        addressFamily:
+            transportLease.addressFamily ?? profile.preferredAddressFamily,
+        protocolVersion: profile.protocolVersion,
+        appVersion: profile.appVersion,
+        capabilities: profile.capabilities,
+      ),
+    );
+  }
+
+  PeerAvailabilitySnapshot? _stableAvailabilityForTransientFailure({
+    required DeviceProfile device,
+    required PeerAvailabilitySnapshot? existing,
+    required PeerAvailabilitySnapshot failed,
+  }) {
+    if (failed.status != PeerAvailabilityStatus.unreachable) {
+      return null;
+    }
+    final lease = _transportVerifiedPeerLeases[device.deviceId];
+    if (lease == null || !_isFreshTransportLease(lease)) {
+      return null;
+    }
+    if (existing?.status == PeerAvailabilityStatus.ready) {
+      return existing!.copyWith(
+        nickname: device.nickname,
+        updatedAt: DateTime.now(),
+        selectedAddress: lease.selectedAddress ?? existing.selectedAddress,
+        selectedPort: lease.selectedPort ?? existing.selectedPort,
+        addressFamily: lease.addressFamily ?? existing.addressFamily,
+        errorMessage: null,
+        protocolVersion: device.protocolVersion,
+        appVersion: device.appVersion,
+        capabilities: device.capabilities,
+      );
+    }
+    final leaseAvailability = _availabilityFromVerifiedLease(
+      device.deviceId,
+      lease: lease,
+      updatedAt: DateTime.now(),
+    );
+    return leaseAvailability?.status == PeerAvailabilityStatus.ready
+        ? leaseAvailability
+        : null;
   }
 
   void _pruneExpiredTransportVerifiedPeerLeases() {
@@ -2275,26 +2841,49 @@ class AppController extends ChangeNotifier {
   }
 
   DeviceProfile _profileForIncomingSession(IncomingTransferSession session) {
-    return _bestKnownProfileForDeviceId(session.senderDeviceId) ??
-        DeviceProfile(
-          deviceId: session.senderDeviceId,
-          nickname: session.senderNickname,
-          platform: 'unknown',
-          ipAddress: session.remoteAddress,
-          ipAddresses: session.remoteAddress.trim().isEmpty
-              ? const <String>[]
-              : <String>[session.remoteAddress],
-          activePort: _bestKnownPortForDevice(session.senderDeviceId),
-          securePort: _bestKnownProfileForDeviceId(session.senderDeviceId)?.securePort,
-          certFingerprint: session.senderFingerprint,
-          appVersion: session.senderAppVersion,
-          protocolVersion: session.protocolVersion,
-          capabilities: const <String>[
-            NetworkConstants.protocolCapabilityQueuedApproval,
-          ],
-          preferredAddressFamily: _addressFamilyFor(session.remoteAddress),
-          lastSeen: DateTime.now(),
-        );
+    final known = _bestKnownProfileForDeviceId(session.senderDeviceId);
+    final sessionAddresses = session.remoteAddress.trim().isEmpty
+        ? const <String>[]
+        : <String>[session.remoteAddress];
+    if (known != null) {
+      return known.copyWith(
+        nickname: session.senderNickname,
+        ipAddress: session.remoteAddress.trim().isEmpty
+            ? known.ipAddress
+            : session.remoteAddress,
+        ipAddresses: sessionAddresses.isEmpty
+            ? known.ipAddresses
+            : sessionAddresses,
+        certFingerprint: session.senderFingerprint.trim().isEmpty
+            ? known.certFingerprint
+            : session.senderFingerprint,
+        appVersion: session.senderAppVersion.trim().isEmpty
+            ? known.appVersion
+            : session.senderAppVersion,
+        protocolVersion: session.protocolVersion.trim().isEmpty
+            ? known.protocolVersion
+            : session.protocolVersion,
+        preferredAddressFamily: _addressFamilyFor(session.remoteAddress),
+        lastSeen: DateTime.now(),
+      );
+    }
+    return DeviceProfile(
+      deviceId: session.senderDeviceId,
+      nickname: session.senderNickname,
+      platform: 'unknown',
+      ipAddress: session.remoteAddress,
+      ipAddresses: sessionAddresses,
+      activePort: _bestKnownPortForDevice(session.senderDeviceId),
+      certFingerprint: session.senderFingerprint,
+      appVersion: session.senderAppVersion,
+      protocolVersion: session.protocolVersion,
+      capabilities: const <String>[
+        NetworkConstants.protocolCapabilityQueuedApproval,
+        NetworkConstants.protocolCapabilityHttpsTransfer,
+      ],
+      preferredAddressFamily: _addressFamilyFor(session.remoteAddress),
+      lastSeen: DateTime.now(),
+    );
   }
 
   DeviceProfile _profileForTransportSnapshot(
@@ -2312,7 +2901,9 @@ class AppController extends ChangeNotifier {
           activePort:
               snapshot.selectedPort ??
               _bestKnownPortForDevice(snapshot.peerDeviceId),
-          securePort: _bestKnownProfileForDeviceId(snapshot.peerDeviceId)?.securePort,
+          securePort: _bestKnownProfileForDeviceId(
+            snapshot.peerDeviceId,
+          )?.securePort,
           certFingerprint: '',
           appVersion:
               _peerAvailabilityById[snapshot.peerDeviceId]?.appVersion ?? '',
@@ -2385,7 +2976,7 @@ class AppController extends ChangeNotifier {
     return _addressFamilyFor(address) == 'ipv4' ? 0 : 1;
   }
 
-  List<_HealthSweepTarget> _buildZeroPeerHealthSweepTargets(
+  List<_HealthSweepTarget> _buildDesktopHealthSweepTargets(
     List<NetworkInterfaceSnapshot> interfaces,
   ) {
     final localAddresses = <String>{
@@ -2394,12 +2985,13 @@ class AppController extends ChangeNotifier {
     final targets = <String, _HealthSweepTarget>{};
 
     void addTarget(String address, int port) {
-      if (address.trim().isEmpty ||
-          localAddresses.contains(address) ||
-          _isKnownSweepAddress(address)) {
+      final trimmed = address.trim();
+      if (trimmed.isEmpty ||
+          localAddresses.contains(trimmed) ||
+          _isKnownSweepAddress(trimmed)) {
         return;
       }
-      final target = _HealthSweepTarget(address: address, port: port);
+      final target = _HealthSweepTarget(address: trimmed, port: port);
       targets.putIfAbsent(target.key, () => target);
     }
 
@@ -2417,33 +3009,37 @@ class AppController extends ChangeNotifier {
     return targets.values.toList(growable: false);
   }
 
-  bool _promoteHealthSweepPeer(TransferHealthPeerSnapshot snapshot) {
+  bool _promoteDesktopHealthSweepPeer(TransferHealthPeerSnapshot snapshot) {
     final deviceId = snapshot.profile.deviceId;
     final existing = _peerAvailabilityById[deviceId];
-    final isSameReadyPeer =
+    final nextAvailability = _availabilityWithTrustPolicy(
+      snapshot.profile,
+      PeerAvailabilitySnapshot(
+        deviceId: deviceId,
+        nickname: snapshot.profile.nickname,
+        status: PeerAvailabilityStatus.ready,
+        updatedAt: DateTime.now(),
+        selectedAddress: snapshot.selectedAddress,
+        selectedPort: snapshot.selectedPort,
+        addressFamily: snapshot.addressFamily,
+        protocolVersion: snapshot.profile.protocolVersion,
+        appVersion: snapshot.profile.appVersion,
+        capabilities: snapshot.profile.capabilities,
+      ),
+    );
+    final isSamePeer =
         existing != null &&
-        existing.status == PeerAvailabilityStatus.ready &&
-        existing.selectedAddress == snapshot.selectedAddress &&
-        existing.selectedPort == snapshot.selectedPort &&
-        existing.addressFamily == snapshot.addressFamily &&
-        existing.nickname == snapshot.profile.nickname &&
-        existing.protocolVersion == snapshot.profile.protocolVersion &&
-        existing.appVersion == snapshot.profile.appVersion;
+        existing.status == nextAvailability.status &&
+        existing.selectedAddress == nextAvailability.selectedAddress &&
+        existing.selectedPort == nextAvailability.selectedPort &&
+        existing.addressFamily == nextAvailability.addressFamily &&
+        existing.nickname == nextAvailability.nickname &&
+        existing.protocolVersion == nextAvailability.protocolVersion &&
+        existing.appVersion == nextAvailability.appVersion;
 
     _peerAvailabilityProbeFutures.remove(deviceId);
     _nextPeerAvailabilityProbeGeneration(deviceId);
-    _peerAvailabilityById[deviceId] = PeerAvailabilitySnapshot(
-      deviceId: deviceId,
-      nickname: snapshot.profile.nickname,
-      status: PeerAvailabilityStatus.ready,
-      updatedAt: DateTime.now(),
-      selectedAddress: snapshot.selectedAddress,
-      selectedPort: snapshot.selectedPort,
-      addressFamily: snapshot.addressFamily,
-      protocolVersion: snapshot.profile.protocolVersion,
-      appVersion: snapshot.profile.appVersion,
-      capabilities: snapshot.profile.capabilities,
-    );
+    _peerAvailabilityById[deviceId] = nextAvailability;
 
     _touchTransportVerifiedPeerLease(
       deviceId: deviceId,
@@ -2453,7 +3049,7 @@ class AppController extends ChangeNotifier {
       addressFamily: snapshot.addressFamily,
     );
     _markHealthyDiscoveryActivity();
-    return !isSameReadyPeer;
+    return !isSamePeer;
   }
 
   bool _isKnownSweepAddress(String address) {
@@ -2580,12 +3176,36 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _trustPeerAfterVerifiedTransfer(DeviceProfile peer) async {
+    final fingerprint = peer.certFingerprint.trim();
+    if (peer.deviceId.trim().isEmpty || fingerprint.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final existing = _trustedPeersById[peer.deviceId];
+    _trustedPeersById[peer.deviceId] =
+        existing?.copyWith(
+          nickname: peer.nickname,
+          certFingerprint: fingerprint,
+          lastVerifiedAt: now,
+        ) ??
+        TrustedPeerRecord(
+          deviceId: peer.deviceId,
+          nickname: peer.nickname,
+          certFingerprint: fingerprint,
+          firstTrustedAt: now,
+          lastVerifiedAt: now,
+        );
+    await _store.saveTrustedPeers(_trustedPeersById.values.toList());
+  }
+
   @override
   void dispose() {
     _discoveryRescanTimer?.cancel();
     _discoverySubscription?.cancel();
     _discoveryHealthSubscription?.cancel();
     unawaited(_localNetworkPlatformService.releaseMulticastLock());
+    unawaited(_localNetworkPlatformService.releaseWifiLock());
     unawaited(_discoveryService.stop());
     _discoveryService.dispose();
     unawaited(_transferServer.stop());
@@ -2608,13 +3228,16 @@ class AppController extends ChangeNotifier {
 
   int get _verifiedPeerCount {
     final activeIds = _nearbyDevices.map((item) => item.deviceId).toSet();
-    return _peerAvailabilityById.values
-        .where(
-          (item) =>
-              activeIds.contains(item.deviceId) &&
-              item.status == PeerAvailabilityStatus.ready,
-        )
-        .length;
+    var count = 0;
+    for (final deviceId in activeIds) {
+      final availability =
+          _peerAvailabilityById[deviceId] ??
+          _availabilityFromVerifiedLease(deviceId);
+      if (availability?.status == PeerAvailabilityStatus.ready) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   DiscoveryHealth _reconcileDiscoveryHealth(DiscoveryHealth health) {

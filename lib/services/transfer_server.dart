@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
@@ -10,6 +9,8 @@ import '../core/constants/network_constants.dart';
 import '../models/transfer_diagnostics_snapshot.dart';
 import '../models/transfer_models.dart';
 import 'local_identity_service.dart';
+import 'safe_archive_extractor.dart';
+import 'transfer_pin_service.dart';
 
 typedef IncomingSessionHandler = void Function(IncomingTransferSession session);
 typedef TransferProgressHandler = void Function(TransferProgress progress);
@@ -30,6 +31,7 @@ class TransferServer {
     Duration? incomingSessionCleanupInterval,
     Duration? terminalSessionRetention,
     Duration? acceptedSessionInactivity,
+    Duration? pinChallengeTimeout,
   }) : _approvalTimeout = approvalTimeout ?? NetworkConstants.approvalTimeout,
        _incomingSessionCleanupInterval =
            incomingSessionCleanupInterval ??
@@ -37,7 +39,8 @@ class TransferServer {
        _terminalSessionRetention =
            terminalSessionRetention ?? const Duration(minutes: 2),
        _acceptedSessionInactivity =
-           acceptedSessionInactivity ?? const Duration(minutes: 5);
+           acceptedSessionInactivity ?? const Duration(minutes: 5),
+       _pinChallengeTimeout = pinChallengeTimeout ?? const Duration(minutes: 1);
 
   IncomingSessionHandler onIncomingSessionChanged;
   TransferProgressHandler onProgress;
@@ -46,13 +49,18 @@ class TransferServer {
   TransferTraceHandler? onTrace;
   Future<String> Function() resolveSaveDirectory;
   String Function() nicknameProvider;
+  TransferPinSettings? Function()? pinSettingsProvider;
   String appVersion;
   final Duration _approvalTimeout;
   final Duration _incomingSessionCleanupInterval;
   final Duration _terminalSessionRetention;
   final Duration _acceptedSessionInactivity;
+  final Duration _pinChallengeTimeout;
 
   final Map<String, _IncomingSession> _sessions = <String, _IncomingSession>{};
+  final Map<String, DateTime> _pinChallengeExpiries = <String, DateTime>{};
+  final Map<String, List<DateTime>> _pinFailureTimesByRemote =
+      <String, List<DateTime>>{};
   final List<HttpServer> _servers = <HttpServer>[];
   final List<HttpServer> _secureServers = <HttpServer>[];
   int? _port;
@@ -72,14 +80,19 @@ class TransferServer {
           _servers.any(
             (server) => server.address.type == InternetAddressType.IPv4,
           )) ||
-      _secureServers.any((server) => server.address.type == InternetAddressType.IPv4);
+      _secureServers.any(
+        (server) => server.address.type == InternetAddressType.IPv4,
+      );
   bool get hasSecureIpv6Listener =>
       (_primaryPortUsesTls &&
           _servers.any(
             (server) => server.address.type == InternetAddressType.IPv6,
           )) ||
-      _secureServers.any((server) => server.address.type == InternetAddressType.IPv6);
-  bool get hasSecureListener => _primaryPortUsesTls || _secureServers.isNotEmpty;
+      _secureServers.any(
+        (server) => server.address.type == InternetAddressType.IPv6,
+      );
+  bool get hasSecureListener =>
+      _primaryPortUsesTls || _secureServers.isNotEmpty;
 
   Future<void> start({
     required int port,
@@ -136,6 +149,8 @@ class TransferServer {
     _securePort = null;
     _primaryPortUsesTls = false;
     _sessions.clear();
+    _pinChallengeExpiries.clear();
+    _pinFailureTimesByRemote.clear();
     _identity = null;
   }
 
@@ -196,6 +211,39 @@ class TransferServer {
     );
   }
 
+  Future<void> cancelIncoming(
+    String transferId, {
+    String reason = 'Transfer canceled.',
+  }) async {
+    final session = _sessions[transferId];
+    if (session == null ||
+        session.terminalReason == TransferTerminalReason.canceled) {
+      return;
+    }
+    if (session.decisionStatus == TransferDecisionStatus.pending) {
+      session.decisionStatus = TransferDecisionStatus.declined;
+    }
+    session
+      ..terminalReason = TransferTerminalReason.canceled
+      ..reason = reason
+      ..retireAt = DateTime.now().add(_terminalSessionRetention)
+      ..touch();
+    _emitSessionUpdate(session);
+    _emitIncomingStatus(
+      session,
+      status: TransferStatus.canceled,
+      stage: TransferStage.failed,
+      errorMessage: reason,
+    );
+    _emitDiagnostics(
+      session,
+      stage: TransferStage.failed,
+      decisionStatus: session.decisionStatus,
+      terminalReason: TransferTerminalReason.canceled,
+      errorMessage: reason,
+    );
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     final remoteAddress = request.connectionInfo?.remoteAddress.address;
     final remotePort = request.connectionInfo?.remotePort;
@@ -219,6 +267,15 @@ class TransferServer {
           segments[1] == 'transfer' &&
           segments[2] == 'health') {
         await _handleHealth(request);
+        return;
+      }
+
+      if (request.method == 'GET' &&
+          segments.length == 3 &&
+          segments[0] == 'v1' &&
+          segments[1] == 'transfer' &&
+          segments[2] == 'pin-challenge') {
+        await _handlePinChallenge(request);
         return;
       }
 
@@ -331,6 +388,27 @@ class TransferServer {
       return;
     }
 
+    if (_isPinRateLimited(remoteIp)) {
+      await _respondJson(
+        request.response,
+        HttpStatus.tooManyRequests,
+        <String, dynamic>{'error': 'Too many incorrect PIN attempts.'},
+      );
+      return;
+    }
+
+    final pinFailure = _verifyOfferPin(offer.pinAuth);
+    if (pinFailure != null) {
+      _trackPinFailure(remoteIp);
+      await _respondJson(
+        request.response,
+        HttpStatus.forbidden,
+        <String, dynamic>{'error': pinFailure},
+      );
+      return;
+    }
+    _clearPinFailures(remoteIp);
+
     final existing = _sessions[offer.transferId];
     if (existing != null) {
       existing.touch();
@@ -423,6 +501,14 @@ class TransferServer {
       );
       return;
     }
+    if (session.terminalReason == TransferTerminalReason.canceled) {
+      await _respondJson(
+        request.response,
+        HttpStatus.conflict,
+        <String, dynamic>{'error': session.reason ?? 'Transfer canceled.'},
+      );
+      return;
+    }
 
     final itemId = request.uri.queryParameters['itemId'];
     if (itemId == null || itemId.isEmpty) {
@@ -470,26 +556,68 @@ class TransferServer {
         final outputPath = _incomingPayloadPath(session, item);
         final outputFile = File(outputPath);
         final sink = outputFile.openWrite();
+        final digestOutput = _DigestSink();
+        final digestInput = sha256.startChunkedConversion(digestOutput);
         var receivedBytes = 0;
-        try {
-          await for (final chunk in request) {
-            sink.add(chunk);
-            receivedBytes += chunk.length;
-            session
-              ..receivedBytes += chunk.length
-              ..touch();
-            _emitIncomingStatus(
-              session,
-              status: TransferStatus.inProgress,
-              stage: TransferStage.uploading,
-            );
+        var lastProgressAt = DateTime.now();
+        var lastProgressBytes = session.receivedBytes;
+
+        void emitThrottledIncomingStatus() {
+          final now = DateTime.now();
+          final enoughTimeElapsed =
+              now.difference(lastProgressAt) >=
+              NetworkConstants.transferProgressMinInterval;
+          final enoughBytesReceived =
+              session.receivedBytes - lastProgressBytes >=
+              NetworkConstants.transferProgressMinByteDelta;
+          final isComplete = session.receivedBytes >= session.offer.totalBytes;
+          if (!enoughTimeElapsed && !enoughBytesReceived && !isComplete) {
+            return;
           }
-        } finally {
-          await sink.flush();
-          await sink.close();
+          lastProgressAt = now;
+          lastProgressBytes = session.receivedBytes;
+          _emitIncomingStatus(
+            session,
+            status: TransferStatus.inProgress,
+            stage: TransferStage.uploading,
+            updatedAt: now,
+          );
         }
 
-        final digest = await _sha256File(outputFile);
+        try {
+          try {
+            await for (final chunk in request) {
+              if (session.terminalReason == TransferTerminalReason.canceled) {
+                throw const _IncomingTransferException(
+                  TransferTerminalReason.canceled,
+                  'Transfer canceled.',
+                );
+              }
+              digestInput.add(chunk);
+              sink.add(chunk);
+              receivedBytes += chunk.length;
+              session
+                ..receivedBytes += chunk.length
+                ..touch();
+              emitThrottledIncomingStatus();
+            }
+          } finally {
+            digestInput.close();
+            await sink.flush();
+            await sink.close();
+          }
+        } on _IncomingTransferException catch (error) {
+          if (error.reason == TransferTerminalReason.canceled) {
+            try {
+              await outputFile.delete();
+            } catch (_) {
+              // Ignore cleanup failures for partial canceled files.
+            }
+          }
+          rethrow;
+        }
+
+        final digest = digestOutput.value?.toString().toUpperCase() ?? '';
         if (digest != item.checksumSha256.toUpperCase()) {
           try {
             await outputFile.delete();
@@ -530,6 +658,14 @@ class TransferServer {
         ..retireAt = DateTime.now().add(_terminalSessionRetention)
         ..touch();
       _emitSessionUpdate(session);
+      _emitIncomingStatus(
+        session,
+        status: error.reason == TransferTerminalReason.canceled
+            ? TransferStatus.canceled
+            : TransferStatus.failed,
+        stage: TransferStage.failed,
+        errorMessage: error.message,
+      );
       _emitDiagnostics(
         session,
         stage: TransferStage.failed,
@@ -743,7 +879,91 @@ class TransferServer {
     NetworkConstants.protocolCapabilityMdns,
     NetworkConstants.protocolCapabilityQueuedApproval,
     if (hasSecureListener) NetworkConstants.protocolCapabilityHttpsTransfer,
+    if (pinSettingsProvider?.call()?.isValid ?? false)
+      NetworkConstants.protocolCapabilityPinAuth,
   ];
+
+  Future<void> _handlePinChallenge(HttpRequest request) async {
+    final settings = pinSettingsProvider?.call();
+    if (settings == null || !settings.isValid) {
+      await _respondJson(
+        request.response,
+        HttpStatus.serviceUnavailable,
+        <String, dynamic>{'error': 'Receiver PIN is not configured.'},
+      );
+      return;
+    }
+
+    _pruneExpiredPinChallenges();
+    final nonce = TransferPinService.newNonce();
+    final expiresAt = DateTime.now().toUtc().add(_pinChallengeTimeout);
+    _pinChallengeExpiries[nonce] = expiresAt;
+    await _respondJson(
+      request.response,
+      HttpStatus.ok,
+      TransferPinChallenge(
+        algorithm: settings.algorithm,
+        saltBase64: settings.saltBase64,
+        iterations: settings.iterations,
+        nonce: nonce,
+        expiresAt: expiresAt,
+      ).toJson(),
+    );
+  }
+
+  String? _verifyOfferPin(TransferPinAuth? auth) {
+    final settings = pinSettingsProvider?.call();
+    if (settings == null || !settings.isValid) {
+      return 'Receiver PIN is not configured.';
+    }
+    if (auth == null) {
+      return 'Receiver PIN is required.';
+    }
+    _pruneExpiredPinChallenges();
+    final expiresAt = _pinChallengeExpiries.remove(auth.nonce);
+    if (expiresAt == null || DateTime.now().toUtc().isAfter(expiresAt)) {
+      return 'Receiver PIN challenge expired. Try again.';
+    }
+    if (!TransferPinService.verifyAuth(settings: settings, auth: auth)) {
+      return 'Incorrect receiver PIN.';
+    }
+    return null;
+  }
+
+  void _pruneExpiredPinChallenges() {
+    final now = DateTime.now().toUtc();
+    _pinChallengeExpiries.removeWhere((_, expiresAt) => now.isAfter(expiresAt));
+  }
+
+  bool _isPinRateLimited(String remoteIp) {
+    _prunePinFailures(remoteIp);
+    return (_pinFailureTimesByRemote[remoteIp]?.length ?? 0) >= 6;
+  }
+
+  void _trackPinFailure(String remoteIp) {
+    _prunePinFailures(remoteIp);
+    final failures = _pinFailureTimesByRemote.putIfAbsent(
+      remoteIp,
+      () => <DateTime>[],
+    );
+    failures.add(DateTime.now().toUtc());
+  }
+
+  void _clearPinFailures(String remoteIp) {
+    _pinFailureTimesByRemote.remove(remoteIp);
+  }
+
+  void _prunePinFailures(String remoteIp) {
+    final failures = _pinFailureTimesByRemote[remoteIp];
+    if (failures == null) {
+      return;
+    }
+    final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+    failures.removeWhere((timestamp) => timestamp.isBefore(cutoff));
+    if (failures.isEmpty) {
+      _pinFailureTimesByRemote.remove(remoteIp);
+    }
+  }
 
   Future<void> _verifyLocalHealth(LocalIdentity identity) async {
     final port = _port;
@@ -1020,12 +1240,10 @@ class TransferServer {
     await response.close();
   }
 
-  Future<String> _sha256File(File file) async {
-    final digest = await sha256.bind(file.openRead()).first;
-    return digest.toString().toUpperCase();
-  }
-
-  String _incomingResolvedOutputPath(_IncomingSession session, TransferItem item) {
+  String _incomingResolvedOutputPath(
+    _IncomingSession session,
+    TransferItem item,
+  ) {
     final existingPath = session.resolvedOutputPathByItemId[item.id];
     if (existingPath != null) {
       return existingPath;
@@ -1033,7 +1251,9 @@ class TransferServer {
 
     final preferredPath = p.join(
       session.transferDirectory!.path,
-      item.type == TransferPayloadType.folder ? item.displayName : item.name,
+      SafeArchiveExtractor.sanitizeDisplayName(
+        item.type == TransferPayloadType.folder ? item.displayName : item.name,
+      ),
     );
     final resolvedPath = _dedupeIncomingPath(
       preferredPath,
@@ -1052,15 +1272,15 @@ class TransferServer {
     final parent = p.dirname(normalizedPreferredPath);
     final basename = p.basename(normalizedPreferredPath);
     final extension = p.extension(basename);
-    final stem =
-        extension.isEmpty
-            ? basename
-            : basename.substring(0, basename.length - extension.length);
+    final stem = extension.isEmpty
+        ? basename
+        : basename.substring(0, basename.length - extension.length);
 
     var suffix = 0;
     while (true) {
-      final candidateName =
-          suffix == 0 ? basename : '$stem ($suffix)$extension';
+      final candidateName = suffix == 0
+          ? basename
+          : '$stem ($suffix)$extension';
       final candidatePath = p.join(parent, candidateName);
       final normalizedCandidatePath = p.normalize(candidatePath);
       final isReserved = reservedPaths.contains(normalizedCandidatePath);
@@ -1092,11 +1312,12 @@ class TransferServer {
     required String itemId,
   }) async {
     final normalizedTargetPath = p.normalize(targetPath);
-    final defaultPath = p.join(saveRoot.path, folderName);
-    final normalizedDefaultPath = p.normalize(defaultPath);
-    if (normalizedTargetPath == normalizedDefaultPath) {
-      extractFileToDisk(zipPath, saveRoot.path);
-      return Directory(normalizedTargetPath);
+    final normalizedSaveRootPath = p.normalize(saveRoot.absolute.path);
+    if (!p.isWithin(normalizedSaveRootPath, normalizedTargetPath)) {
+      throw const _IncomingTransferException(
+        TransferTerminalReason.integrityCheckFailed,
+        'Folder destination is not safe',
+      );
     }
 
     final stagingDir = Directory(
@@ -1107,16 +1328,35 @@ class TransferServer {
     }
     await stagingDir.create(recursive: true);
     try {
-      extractFileToDisk(zipPath, stagingDir.path);
-      final stagedExtractDir = Directory(p.join(stagingDir.path, folderName));
-      if (!await stagedExtractDir.exists()) {
-        throw const _IncomingTransferException(
-          TransferTerminalReason.uploadFailed,
-          'Folder extraction failed',
-        );
+      final result = await SafeArchiveExtractor.extractZipToStaging(
+        zipFile: File(zipPath),
+        stagingDirectory: stagingDir,
+      );
+      final topLevelName = result.topLevelNames.length == 1
+          ? result.topLevelNames.first
+          : null;
+      final stagedRoot = topLevelName == null
+          ? null
+          : Directory(p.join(stagingDir.path, topLevelName));
+      if (stagedRoot != null && await stagedRoot.exists()) {
+        final movedDir = await stagedRoot.rename(normalizedTargetPath);
+        return movedDir;
       }
-      final movedDir = await stagedExtractDir.rename(normalizedTargetPath);
-      return movedDir;
+      final wrappedTarget = Directory(normalizedTargetPath);
+      await wrappedTarget.create(recursive: false);
+      await for (final entity in stagingDir.list(followLinks: false)) {
+        final basename = SafeArchiveExtractor.sanitizeDisplayName(
+          p.basename(entity.path),
+          fallback: folderName,
+        );
+        await entity.rename(p.join(wrappedTarget.path, basename));
+      }
+      return wrappedTarget;
+    } on SafeArchiveException catch (error) {
+      throw _IncomingTransferException(
+        TransferTerminalReason.integrityCheckFailed,
+        error.message,
+      );
     } finally {
       if (await stagingDir.exists()) {
         try {
@@ -1141,7 +1381,7 @@ class TransferServer {
     return TransferItem(
       id: item.id,
       type: item.type,
-      name: item.displayName,
+      name: SafeArchiveExtractor.sanitizeDisplayName(item.displayName),
       sizeBytes: session?.receivedItemSizes[item.id] ?? item.sizeBytes,
       checksumSha256: item.checksumSha256,
       sourcePath: session?.receivedPathByItemId[item.id],
@@ -1227,4 +1467,16 @@ class _IncomingTransferException implements Exception {
 
   final TransferTerminalReason reason;
   final String message;
+}
+
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    value = data;
+  }
+
+  @override
+  void close() {}
 }

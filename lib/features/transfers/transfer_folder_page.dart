@@ -97,10 +97,8 @@ Future<void> openTransferFolder(
     }
     await navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => TransferFolderPage(
-          folderPath: folderPath,
-          title: title,
-        ),
+        builder: (_) =>
+            TransferFolderPage(folderPath: folderPath, title: title),
       ),
     );
     return;
@@ -111,10 +109,7 @@ Future<void> openTransferFolder(
   }
   await navigator.push(
     MaterialPageRoute<void>(
-      builder: (_) => TransferFolderPage(
-        folderPath: folderPath,
-        title: title,
-      ),
+      builder: (_) => TransferFolderPage(folderPath: folderPath, title: title),
     ),
   );
 }

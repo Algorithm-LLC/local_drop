@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:basic_utils/basic_utils.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pointycastle/asn1.dart';
 import 'package:uuid/uuid.dart';
 
 class LocalIdentity {
@@ -28,73 +31,52 @@ class LocalIdentity {
 }
 
 class LocalIdentityService {
+  LocalIdentityService({
+    Future<Directory> Function()? identityDirectoryProvider,
+  }) : _identityDirectoryProvider = identityDirectoryProvider;
+
   static const String _identityDirName = 'identity';
   static const String _deviceFileName = 'device_id.txt';
   static const String _certFileName = 'device_cert.pem';
   static const String _keyFileName = 'device_key.pem';
-  static const String _sharedCertificatePem = '''
------BEGIN CERTIFICATE-----
-MIIDWTCCAkGgAwIBAgIJAKPPaHNXKzqsMA0GCSqGSIb3DQEBCwUAMDwxCzAJBgNV
-BAYTAlVTMRIwEAYDVQQKEwlMb2NhbERyb3AxGTAXBgNVBAMTEGxvY2FsZHJvcC1z
-aGFyZWQwHhcNMjYwNDA2MTI0MjA5WhcNMzYwNDA3MTI0MjA5WjA8MQswCQYDVQQG
-EwJVUzESMBAGA1UEChMJTG9jYWxEcm9wMRkwFwYDVQQDExBsb2NhbGRyb3Atc2hh
-cmVkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4Zj4SyQAg8ANB8x3
-KtRrFUdZZU6pKd07CbIi36i5VKMjWy75UltlNDcMXUn4/d5BZMlGzvVc/xvkk3eo
-K0sF7X9FJqDKm24ieucmwVowP6Qy0kcIecW76krB2kc8V8ykP/+LHE6GPY+uZBmO
-Ej59ziFBj8YjaWOICE9NaUno8Lf/KgUs77aCHBzgE4D5MUNTjaPDSNYVTylm0utJ
-kBn3IRK1i8tEwUavG7YFn535sJimSx64M8mmKENCrjevuk13dQYFr7qjO+3xc3Wm
-pg0BArtcicJxSEcnqp2PV7N/d4XgKeWyTqiLX9wP2fQm1d/9355IkpypT+Xwccls
-a6p1ZQIDAQABo14wXDAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIFoDAdBgNV
-HSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwHQYDVR0RAQH/BBMwEYIPbG9jYWxk
-cm9wLmxvY2FsMA0GCSqGSIb3DQEBCwUAA4IBAQC7Klnpm/J8yYXZTc27xccDNWpK
-ExOBSgBvRgUxPOYNLWrX3l/3haWdxCqm5HpiZJGHoEn5a8hMs2hUbqy7tmNQQ3Qf
-1dhxlpDGCjobj+KWYG9xyJ4BWkTD9GiltQmmNkk4UdH+YvtvAsbW5sK5IXANl9T8
-MQfwXgZ+FrjP1oaoU5bbuUMrplgXLcha1b74AHOg0gRqBQQ+Qrd1evtQogW260yg
-7lVoP+VkQtLEzYOcqFi3X45LOP6Yfniau9kSlOA+28ZeUJ9J++gEsaOUjmV+zuyE
-3fF+Vy2Akw6XF+Lz+aBNhyFlskIZJhuwgnCYFtkJxeP5mOIvyk1aozH23atU
------END CERTIFICATE-----
-''';
-  static const String _sharedPrivateKeyPem = '''
------BEGIN PRIVATE KEY-----
-MIIEwAIBADANBgkqhkiG9w0BAQEFAASCBKowggSmAgEAAoIBAQDhmPhLJACDwA0H
-zHcq1GsVR1llTqkp3TsJsiLfqLlUoyNbLvlSW2U0NwxdSfj93kFkyUbO9Vz/G+ST
-d6grSwXtf0UmoMqbbiJ65ybBWjA/pDLSRwh5xbvqSsHaRzxXzKQ//4scToY9j65k
-GY4SPn3OIUGPxiNpY4gIT01pSejwt/8qBSzvtoIcHOATgPkxQ1ONo8NI1hVPKWbS
-60mQGfchErWLy0TBRq8btgWfnfmwmKZLHrgzyaYoQ0KuN6+6TXd1BgWvuqM77fFz
-daamDQECu1yJwnFIRyeqnY9Xs393heAp5bJOqItf3A/Z9CbV3/3fnkiSnKlP5fBx
-yWxrqnVlAgMBAAECggEBAJ05KMHlY15uuCYZP2vgAokf4pOSEJ8WiZCmT1ukkRUF
-ZRylTikxfQS44KsbZKY5AUYmaGzP33IDlHeZyt/xNz5flmfnY4yTYwBYnE/gdQPF
-gY2+549GWUJdu2BOiSV/f3ECvYaKy0+YFSe6D6NzXeYMk06J/h/yt9liu0aHtgoc
-Qg2aiw1BfJvdQZbI4JdzN9n/9VVSmtenFakfBKziXF1SdcurHjCdETGZzvGeZcQQ
-RtlYy0fqQ+6jUliCicNKtrQNYC+XCfXJOWuSRc6+KUHMNnFnfD/J94Lz4eT/Q+Cu
-Lgt248PCFszlkQD+/XOKv9zXh4Nyy2bBB97Gtn6Tc7kCgYEA/WhGcBkNbq4APeJZ
-BCrUdGpUZj8bu8disIJniRusBsnFB7D/52T+SyAZjuMV0ap167TmPEj48hImjHOO
-T/JWJXND3Jwfae7ismTrBkWwFReJz00LYaN2weN/ahVTQiV9UuJrvDJ7Z2KgNIjI
-fqJJEQiI4l4VzrSBVPVvXT5b/8MCgYEA4+fa9eAhOWETVRn4sEXqa2w4WnD7gwck
-rV4s+izNwP4F+Xbugin8+5e8nFZsvYzJ2hD1qI/tl5jVsRWynAvfdFxg75NhgbZP
-K+Ipz2sog++lmFNtPBszS4fDTqFIkhFDLOvL+ic4CJB2WbSOrr6/c8O6P+3egqsE
-Y7Tbhrkdy7cCgYEAu8F9HyWQzEbkKvYAmpPZYoA+FJwBwnoS51FXwUDdjxIEiJRe
-p2Yu/B7GkRY0Xmr8gC5CwLwYp9NG+J3N/fJCXfEvgM+0ftre4OrhMH6F3rrYAt7E
-5g0lurcC+ujeDY6VcsoMpR6KTKnIpeQLGbjIhnRaZ87qPYOEqBxJ7T59D90CgYEA
-gBAWr7bjtHRiAp33akW/NeG3wMpf6f6nk2up5mIqs9mJzeYQm7+wUkevSkIeFFz6
-R7jj8XX+0gKlgT5qANmDFMWcCsNMNTEWR9hsGgti1tBgwrmOVgoKxtRg4NwsBTgC
-AUn2cnh7OgTDHCEjU/oHZquDCs1FDTO/4a8M9CUtIv0CgYEA+y09UUT8TfI1FCYu
-H54lv2V8wD90Xak/DJlB6FHqhXCzncUyYbGCa5KpjN/LVKhpxhC5L36KpLxcD6Hb
-2cx6+d4pvV71Clhn/B+AmGEKo7voKspjtHfP/ov48s2Xx3oH57yjlwSIm4sZw6ma
-nbLkvwLrU4z8p9QrvQviTCr/V+8=
------END PRIVATE KEY-----
-''';
+  static const String _identityVersionFileName = 'identity_version.txt';
+  static const String _currentIdentityVersion = '2';
+  static const int _certificateDays = 3650;
+
+  final Future<Directory> Function()? _identityDirectoryProvider;
 
   Future<LocalIdentity> loadOrCreate() async {
     final identityDir = await _resolveIdentityDirectory();
     final deviceFile = File(p.join(identityDir.path, _deviceFileName));
     final deviceId = await _resolveDeviceId(deviceFile);
-    await _cleanupLegacyIdentityFiles(identityDir);
+    final certFile = File(p.join(identityDir.path, _certFileName));
+    final keyFile = File(p.join(identityDir.path, _keyFileName));
+    final versionFile = File(
+      p.join(identityDir.path, _identityVersionFileName),
+    );
 
-    return _buildIdentity(
+    if (await certFile.exists() &&
+        await keyFile.exists() &&
+        await _hasCurrentIdentityVersion(versionFile)) {
+      try {
+        return _buildIdentity(
+          deviceId: deviceId,
+          certificatePem: await certFile.readAsString(),
+          privateKeyPem: await keyFile.readAsString(),
+        );
+      } catch (_) {
+        await _deleteIfExists(certFile);
+        await _deleteIfExists(keyFile);
+      }
+    }
+
+    await _deleteIfExists(certFile);
+    await _deleteIfExists(keyFile);
+    return _generateAndPersistIdentity(
       deviceId: deviceId,
-      certificatePem: _sharedCertificatePem,
-      privateKeyPem: _sharedPrivateKeyPem,
+      certFile: certFile,
+      keyFile: keyFile,
+      versionFile: versionFile,
     );
   }
 
@@ -102,11 +84,11 @@ nbLkvwLrU4z8p9QrvQviTCr/V+8=
     final identityDir = await _resolveIdentityDirectory();
     final deviceFile = File(p.join(identityDir.path, _deviceFileName));
     final deviceId = await _resolveDeviceId(deviceFile);
-    await _cleanupLegacyIdentityFiles(identityDir);
-    return _buildIdentity(
+    return _generateAndPersistIdentity(
       deviceId: deviceId,
-      certificatePem: _sharedCertificatePem,
-      privateKeyPem: _sharedPrivateKeyPem,
+      certFile: File(p.join(identityDir.path, _certFileName)),
+      keyFile: File(p.join(identityDir.path, _keyFileName)),
+      versionFile: File(p.join(identityDir.path, _identityVersionFileName)),
     );
   }
 
@@ -126,6 +108,13 @@ nbLkvwLrU4z8p9QrvQviTCr/V+8=
       _normalizeFingerprint(value);
 
   Future<Directory> _resolveIdentityDirectory() async {
+    final provided = await _identityDirectoryProvider?.call();
+    if (provided != null) {
+      if (!await provided.exists()) {
+        await provided.create(recursive: true);
+      }
+      return provided;
+    }
     final supportDir = await getApplicationSupportDirectory();
     final identityDir = Directory(
       p.join(supportDir.path, 'LocalDrop', _identityDirName),
@@ -141,6 +130,10 @@ nbLkvwLrU4z8p9QrvQviTCr/V+8=
     required String certificatePem,
     required String privateKeyPem,
   }) {
+    _validateKeyPair(
+      certificatePem: certificatePem,
+      privateKeyPem: privateKeyPem,
+    );
     final certificateBytes = _pemToDerBytes(certificatePem);
     final fingerprint = _normalizeFingerprint(
       sha256.convert(certificateBytes).toString(),
@@ -154,13 +147,204 @@ nbLkvwLrU4z8p9QrvQviTCr/V+8=
     );
   }
 
-  Future<void> _cleanupLegacyIdentityFiles(Directory identityDir) async {
-    for (final fileName in <String>[_certFileName, _keyFileName]) {
-      final file = File(p.join(identityDir.path, fileName));
-      if (await file.exists()) {
-        await file.delete();
-      }
+  Future<LocalIdentity> _generateAndPersistIdentity({
+    required String deviceId,
+    required File certFile,
+    required File keyFile,
+    required File versionFile,
+  }) async {
+    final keyPair = CryptoUtils.generateRSAKeyPair(keySize: 2048);
+    final privateKey = keyPair.privateKey as RSAPrivateKey;
+    final publicKey = keyPair.publicKey as RSAPublicKey;
+    final certPem = _generateTlsCertificatePem(
+      deviceId: deviceId,
+      privateKey,
+      publicKey,
+    );
+    final keyPem = CryptoUtils.encodeRSAPrivateKeyToPem(privateKey);
+    await certFile.writeAsString(certPem, flush: true);
+    await keyFile.writeAsString(keyPem, flush: true);
+    await versionFile.writeAsString(_currentIdentityVersion, flush: true);
+    return _buildIdentity(
+      deviceId: deviceId,
+      certificatePem: certPem,
+      privateKeyPem: keyPem,
+    );
+  }
+
+  void _validateKeyPair({
+    required String certificatePem,
+    required String privateKeyPem,
+  }) {
+    final certModulus = X509Utils.getModulusFromRSAX509Pem(certificatePem);
+    final keyModulus = CryptoUtils.getModulusFromRSAPrivateKeyPem(
+      privateKeyPem,
+    );
+    if (certModulus != keyModulus) {
+      throw StateError('Local identity certificate and private key mismatch.');
     }
+  }
+
+  Future<void> _deleteIfExists(File file) async {
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
+  Future<bool> _hasCurrentIdentityVersion(File file) async {
+    if (!await file.exists()) {
+      return false;
+    }
+    return (await file.readAsString()).trim() == _currentIdentityVersion;
+  }
+
+  String _generateTlsCertificatePem(
+    RSAPrivateKey privateKey,
+    RSAPublicKey publicKey, {
+    required String deviceId,
+  }) {
+    final now = DateTime.now().toUtc();
+    final notBefore = now.subtract(const Duration(days: 1));
+    final notAfter = now.add(const Duration(days: _certificateDays));
+    final subject = _distinguishedName(<String, String>{
+      '2.5.4.10': 'LocalDrop',
+      '2.5.4.3': 'localdrop-$deviceId',
+    });
+    final signatureAlgorithm = _rsaSha256AlgorithmIdentifier();
+
+    final tbs = ASN1Sequence()
+      ..add(_explicit(0, ASN1Integer.fromtInt(2).encode()))
+      ..add(ASN1Integer(_randomSerialNumber()))
+      ..add(signatureAlgorithm)
+      ..add(subject)
+      ..add(
+        ASN1Sequence()
+          ..add(ASN1UtcTime(notBefore))
+          ..add(ASN1UtcTime(notAfter)),
+      )
+      ..add(subject)
+      ..add(
+        ASN1Object.fromBytes(
+          CryptoUtils.encodeRSAPublicKeyToDERBytes(publicKey),
+        ),
+      )
+      ..add(_explicit(3, _certificateExtensions().encode()));
+
+    final tbsBytes = tbs.encode();
+    final signature = CryptoUtils.rsaSign(privateKey, tbsBytes);
+    final certificate = ASN1Sequence()
+      ..add(tbs)
+      ..add(_rsaSha256AlgorithmIdentifier())
+      ..add(ASN1BitString(stringValues: signature));
+
+    return _pemForDer(
+      '-----BEGIN CERTIFICATE-----',
+      '-----END CERTIFICATE-----',
+      certificate.encode(),
+    );
+  }
+
+  ASN1Sequence _distinguishedName(Map<String, String> valuesByOid) {
+    final name = ASN1Sequence();
+    for (final entry in valuesByOid.entries) {
+      name.add(
+        ASN1Set(
+          elements: <ASN1Object>[
+            ASN1Sequence(
+              elements: <ASN1Object>[
+                ASN1ObjectIdentifier.fromIdentifierString(entry.key),
+                ASN1UTF8String(utf8StringValue: entry.value),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+    return name;
+  }
+
+  ASN1Sequence _rsaSha256AlgorithmIdentifier() {
+    return ASN1Sequence()
+      ..add(ASN1ObjectIdentifier.fromIdentifierString('1.2.840.113549.1.1.11'))
+      ..add(ASN1Null());
+  }
+
+  ASN1Sequence _certificateExtensions() {
+    return ASN1Sequence()
+      ..add(_extension('2.5.29.19', (ASN1Sequence()).encode()))
+      ..add(
+        _extension(
+          '2.5.29.15',
+          (ASN1BitString(stringValues: <int>[0xA0])..unusedbits = 5).encode(),
+          critical: true,
+        ),
+      )
+      ..add(
+        _extension(
+          '2.5.29.37',
+          (ASN1Sequence()
+                ..add(
+                  ASN1ObjectIdentifier.fromIdentifierString(
+                    '1.3.6.1.5.5.7.3.1',
+                  ),
+                )
+                ..add(
+                  ASN1ObjectIdentifier.fromIdentifierString(
+                    '1.3.6.1.5.5.7.3.2',
+                  ),
+                ))
+              .encode(),
+        ),
+      )
+      ..add(
+        _extension(
+          '2.5.29.17',
+          (ASN1Sequence()
+                ..add(ASN1IA5String(stringValue: 'localdrop.local', tag: 0x82)))
+              .encode(),
+        ),
+      );
+  }
+
+  ASN1Sequence _extension(
+    String oid,
+    Uint8List valueDer, {
+    bool critical = false,
+  }) {
+    final extension = ASN1Sequence()
+      ..add(ASN1ObjectIdentifier.fromIdentifierString(oid));
+    if (critical) {
+      extension.add(ASN1Boolean(true));
+    }
+    extension.add(ASN1OctetString(octets: valueDer));
+    return extension;
+  }
+
+  ASN1Object _explicit(int index, Uint8List encodedValue) {
+    return ASN1Object(tag: 0xA0 + index)..valueBytes = encodedValue;
+  }
+
+  BigInt _randomSerialNumber() {
+    final random = Random.secure();
+    final bytes = Uint8List.fromList(
+      List<int>.generate(16, (_) => random.nextInt(256)),
+    );
+    bytes[0] &= 0x7f;
+    final value = bytes.fold<BigInt>(
+      BigInt.zero,
+      (acc, byte) => (acc << 8) | BigInt.from(byte),
+    );
+    return value == BigInt.zero ? BigInt.one : value;
+  }
+
+  String _pemForDer(String begin, String end, List<int> der) {
+    final encoded = base64.encode(der);
+    final lines = <String>[];
+    for (var i = 0; i < encoded.length; i += 64) {
+      final endIndex = i + 64 > encoded.length ? encoded.length : i + 64;
+      lines.add(encoded.substring(i, endIndex));
+    }
+    return '$begin\n${lines.join('\n')}\n$end\n';
   }
 
   static String _normalizeFingerprint(String value) {

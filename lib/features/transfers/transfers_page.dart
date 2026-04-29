@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:local_drop/l10n/app_localizations.dart';
 
+import '../../models/device_profile.dart';
+import '../../models/send_draft.dart';
 import '../../models/transfer_diagnostics_snapshot.dart';
 import '../../models/transfer_models.dart';
 import '../../state/app_controller.dart';
+import '../../widgets/receiver_pin_dialog.dart';
 import '../../widgets/transfer_diagnostics_dialog.dart';
 import 'transfer_folder_page.dart';
 
@@ -34,14 +37,89 @@ class TransfersPage extends StatelessWidget {
           progress: progress,
           record: record,
           onCancel: () => controller.cancelTransfer(progress),
-          onRetry: () {
+          onRetry: () async {
             if (record != null) {
-              controller.retryTransfer(record);
+              await _retryTransfer(context, record);
             }
           },
         );
       },
     );
+  }
+
+  Future<void> _retryTransfer(
+    BuildContext context,
+    TransferRecord? record,
+  ) async {
+    if (record == null) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final peer = controller.knownProfileForDeviceId(record.peerDeviceId);
+    final receiverPin = await _requestReceiverPin(
+      context,
+      record.peerNickname,
+      peer: peer,
+    );
+    if (!context.mounted || receiverPin == null) {
+      return;
+    }
+    final result = await controller.retryTransfer(
+      record,
+      receiverPin: receiverPin.pin,
+      trustConfirmed: receiverPin.trustConfirmed,
+    );
+    if (!context.mounted || result.success) {
+      return;
+    }
+    final details = result.details?.trim();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          details != null && details.isNotEmpty
+              ? details
+              : _messageForFailure(l10n, result.failureReason),
+        ),
+      ),
+    );
+  }
+
+  Future<ReceiverPinResult?> _requestReceiverPin(
+    BuildContext context,
+    String peerNickname, {
+    DeviceProfile? peer,
+  }) async {
+    return showReceiverPinDialog(
+      context,
+      peerNickname: peerNickname,
+      requiresSecurityConfirmation:
+          peer != null && controller.requiresFirstTransferConfirmation(peer),
+      peerSecurityCode: peer == null
+          ? null
+          : controller.securityCodeForDevice(peer),
+      localSecurityCode: controller.localSecurityCode,
+    );
+  }
+
+  String _messageForFailure(AppLocalizations l10n, SendFailureReason? reason) {
+    return switch (reason) {
+      SendFailureReason.noContent => l10n.selectContentFirst,
+      SendFailureReason.recipientOffline => l10n.sendErrorRecipientOffline,
+      SendFailureReason.transferUnreachable =>
+        l10n.sendErrorTransferUnreachable,
+      SendFailureReason.missingLocalFile => l10n.sendErrorMissingFile,
+      SendFailureReason.timeout => l10n.sendErrorTimeout,
+      SendFailureReason.approvalExpired => l10n.sendErrorApprovalExpired,
+      SendFailureReason.invalidPin => 'Incorrect receiver PIN',
+      SendFailureReason.certificateMismatch => l10n.sendErrorCertificate,
+      SendFailureReason.integrityCheckFailed => l10n.sendErrorIntegrity,
+      SendFailureReason.rejected => l10n.sendErrorRejected,
+      SendFailureReason.incompatibleVersion =>
+        l10n.sendErrorIncompatibleVersion,
+      SendFailureReason.canceled => l10n.statusCanceled,
+      SendFailureReason.busy => l10n.sendErrorBusy,
+      SendFailureReason.unknown || null => l10n.sendErrorUnknown,
+    };
   }
 }
 

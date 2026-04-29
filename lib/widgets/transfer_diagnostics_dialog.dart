@@ -143,6 +143,7 @@ String _terminalReasonLabel(
       l10n.transferReasonConnectionIssue,
     TransferTerminalReason.tlsVerificationFailed =>
       l10n.transferReasonSecurityIssue,
+    TransferTerminalReason.pinVerificationFailed => 'PIN verification failed',
     TransferTerminalReason.approvalExpired =>
       l10n.transferReasonApprovalExpired,
     TransferTerminalReason.declined => l10n.transferReasonDeclined,

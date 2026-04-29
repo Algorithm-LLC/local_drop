@@ -11,6 +11,7 @@ import '../features/home/home_shell.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../models/transfer_models.dart';
 import '../state/app_controller.dart';
+import '../widgets/incoming_transfer_dialog.dart';
 
 class LocalDropApp extends StatefulWidget {
   const LocalDropApp({super.key});
@@ -134,7 +135,7 @@ class _LocalDropAppState extends State<LocalDropApp>
                 });
                 return const SizedBox.shrink();
               }
-              return _IncomingTransferDialog(
+              return IncomingTransferDialog(
                 controller: _controller,
                 session: current,
               );
@@ -195,122 +196,5 @@ class _LocalDropAppState extends State<LocalDropApp>
       return OnboardingScreen(controller: _controller);
     }
     return HomeShell(controller: _controller);
-  }
-}
-
-class _IncomingTransferDialog extends StatefulWidget {
-  const _IncomingTransferDialog({
-    required this.controller,
-    required this.session,
-  });
-
-  final AppController controller;
-  final IncomingTransferSession session;
-
-  @override
-  State<_IncomingTransferDialog> createState() =>
-      _IncomingTransferDialogState();
-}
-
-class _IncomingTransferDialogState extends State<_IncomingTransferDialog> {
-  bool _isSubmitting = false;
-  String? _errorMessage;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final session = widget.session;
-    final remaining = session.remainingApprovalTime.inSeconds;
-    return AlertDialog(
-      title: Text(l10n.incomingRequestsTitle),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            l10n.incomingRequestMessage(
-              session.senderNickname,
-              session.items.length,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(l10n.incomingRequestSize(_formatBytes(session.totalBytes))),
-          const SizedBox(height: 8),
-          Text(l10n.incomingRequestExpiresIn(remaining.clamp(0, 60))),
-          if ((_errorMessage ?? '').trim().isNotEmpty) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(
-              _errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-        ],
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: _isSubmitting ? null : _handleDecline,
-          child: Text(l10n.declineButton),
-        ),
-        FilledButton(
-          onPressed: _isSubmitting ? null : _handleAccept,
-          child: Text(l10n.acceptButton),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _handleAccept() async {
-    setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
-    });
-    final result = await widget.controller.acceptIncoming(
-      widget.session.transferId,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (result.success) {
-      Navigator.of(context).pop();
-      return;
-    }
-    setState(() {
-      _isSubmitting = false;
-      _errorMessage = result.message ?? 'Could not accept the transfer.';
-    });
-  }
-
-  Future<void> _handleDecline() async {
-    setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
-    });
-    final result = await widget.controller.declineIncoming(
-      widget.session.transferId,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (result.success) {
-      Navigator.of(context).pop();
-      return;
-    }
-    setState(() {
-      _isSubmitting = false;
-      _errorMessage = result.message ?? 'Could not decline the transfer.';
-    });
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) {
-      return '$bytes B';
-    }
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 }

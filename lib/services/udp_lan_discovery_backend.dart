@@ -60,6 +60,8 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
   List<NetworkInterfaceSnapshot> _lastNonEmptyInterfaces =
       const <NetworkInterfaceSnapshot>[];
   DateTime? _startupWarmupUntil;
+  DateTime? _lastBurstScanAt;
+  DateTime? _lastDirectDiscoveryProbeAt;
 
   @override
   Stream<List<DeviceProfile>> get devicesStream => _devicesController.stream;
@@ -205,6 +207,8 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
     _consecutiveZeroPeerScans = 0;
     _lastNonEmptyInterfaces = const <NetworkInterfaceSnapshot>[];
     _startupWarmupUntil = null;
+    _lastBurstScanAt = null;
+    _lastDirectDiscoveryProbeAt = null;
     _heartbeatPulseInProgress = false;
     _scanInProgress = false;
     _socket?.close();
@@ -277,14 +281,21 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
     }
     _scanInProgress = true;
 
-    final shouldForceRecoveryBurst =
+    final shouldRequestRecoveryBurst =
         !burstAnnounce &&
         (Platform.isAndroid || Platform.isIOS) &&
         _consecutiveZeroPeerScans >= 3;
 
     final startedAt = DateTime.now();
+    final shouldUseBurst =
+        (burstAnnounce || shouldRequestRecoveryBurst) &&
+        _shouldRunBurstScan(startedAt);
+    final includeDirectSubnetHosts =
+        shouldUseBurst && _shouldRunDirectDiscoveryProbe(startedAt);
     _log(
-      burstAnnounce || shouldForceRecoveryBurst
+      includeDirectSubnetHosts
+          ? 'UDP LAN discovery scan started with announce burst and direct subnet discovery.'
+          : shouldUseBurst
           ? 'UDP LAN discovery scan started with announce burst.'
           : 'UDP LAN discovery scan started.',
     );
@@ -307,7 +318,7 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
     );
 
     try {
-      if (burstAnnounce || shouldForceRecoveryBurst) {
+      if (shouldUseBurst) {
         await announceNow(burst: true);
       }
 
@@ -316,6 +327,7 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
         interfaces: interfaces,
         scanPorts: NetworkConstants.scanPorts,
         multicastAddress: NetworkConstants.discoveryMulticastAddress,
+        includeSubnetHosts: includeDirectSubnetHosts,
       );
       final sent = await _sendPayloadToTargets(
         socket: socket,
@@ -354,7 +366,7 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
         ),
       );
       _log(
-        'UDP LAN discovery scan finished with ${targets.length} target(s) and $_peerCount peer(s).',
+        'UDP LAN discovery scan finished with ${targets.length} target(s), directSubnet=$includeDirectSubnetHosts, and $_peerCount peer(s).',
       );
     } catch (error) {
       _log('UDP LAN discovery scan failed: $error');
@@ -540,15 +552,13 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
         final warmupUntil = _startupWarmupUntil;
         final isWarmupActive =
             warmupUntil != null && DateTime.now().isBefore(warmupUntil);
-        if (isWarmupActive) {
-          await scanNow(burstAnnounce: true);
-          return;
-        }
+        final shouldRequestBurst =
+            isWarmupActive || _consecutiveZeroPeerScans >= 3;
         await announceNow();
         if (_socket == null) {
           return;
         }
-        await scanNow();
+        await scanNow(burstAnnounce: shouldRequestBurst);
         return;
       }
       await announceNow();
@@ -596,6 +606,26 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
         lastBackendLogMessage: 'UDP LAN discovery announce sent.',
       ),
     );
+  }
+
+  bool _shouldRunDirectDiscoveryProbe(DateTime now) {
+    final last = _lastDirectDiscoveryProbeAt;
+    if (last != null &&
+        now.difference(last) < NetworkConstants.discoveryDirectProbeMinInterval) {
+      return false;
+    }
+    _lastDirectDiscoveryProbeAt = now;
+    return true;
+  }
+
+  bool _shouldRunBurstScan(DateTime now) {
+    final last = _lastBurstScanAt;
+    if (last != null &&
+        now.difference(last) < NetworkConstants.discoveryBurstScanMinInterval) {
+      return false;
+    }
+    _lastBurstScanAt = now;
+    return true;
   }
 
   Future<int> _sendPayloadToTargets({
@@ -804,6 +834,7 @@ class UdpLanDiscoveryBackend implements DiscoveryBackend {
     NetworkConstants.protocolCapabilityQueuedApproval,
     if (_securePort != null && _securePort! > 0)
       NetworkConstants.protocolCapabilityHttpsTransfer,
+    NetworkConstants.protocolCapabilityPinAuth,
     'udp-lan',
   ];
 

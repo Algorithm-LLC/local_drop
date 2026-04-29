@@ -670,10 +670,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get transferDiagnosticsSecurityFailed => 'Failed';
 
   @override
-  String get transferDiagnosticsHttpRouteLabel => 'HTTP route';
+  String get transferDiagnosticsHttpRouteLabel => 'Transfer route';
 
   @override
-  String get transferDiagnosticsHttpStatusLabel => 'HTTP status';
+  String get transferDiagnosticsHttpStatusLabel => 'Transfer status';
 
   @override
   String get transferDiagnosticsOfferStatusLabel => 'Offer status';

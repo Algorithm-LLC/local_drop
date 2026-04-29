@@ -14,10 +14,7 @@ typedef FolderPlatformInvoker =
 enum OpenFolderResultKind { openedNatively, unsupported, failed }
 
 class OpenFolderResult {
-  const OpenFolderResult._({
-    required this.kind,
-    this.message,
-  });
+  const OpenFolderResult._({required this.kind, this.message});
 
   const OpenFolderResult.openedNatively()
     : this._(kind: OpenFolderResultKind.openedNatively);
@@ -102,10 +99,9 @@ class PlatformFolderOpener {
         return const OpenFolderResult.openedNatively();
       }
       if (_isAndroid) {
-        final opened = await _platformInvoker(
-          'openFolder',
-          <String, dynamic>{'path': targetDirectory},
-        );
+        final opened = await _platformInvoker('openFolder', <String, dynamic>{
+          'path': targetDirectory,
+        });
         if (opened == true) {
           return const OpenFolderResult.openedNatively();
         }
@@ -114,10 +110,9 @@ class PlatformFolderOpener {
         );
       }
       if (_isIOS) {
-        final opened = await _platformInvoker(
-          'openFolder',
-          <String, dynamic>{'path': targetDirectory},
-        );
+        final opened = await _platformInvoker('openFolder', <String, dynamic>{
+          'path': targetDirectory,
+        });
         if (opened == true) {
           return const OpenFolderResult.openedNatively();
         }
@@ -151,10 +146,9 @@ class PlatformFolderOpener {
     }
 
     try {
-      final opened = await _platformInvoker(
-        'sharePaths',
-        <String, dynamic>{'paths': normalizedPaths},
-      );
+      final opened = await _platformInvoker('sharePaths', <String, dynamic>{
+        'paths': normalizedPaths,
+      });
       if (opened == true) {
         return const OpenFolderResult.openedNatively();
       }

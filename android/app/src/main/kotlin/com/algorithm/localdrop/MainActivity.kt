@@ -21,6 +21,7 @@ import java.util.Locale
 class MainActivity : FlutterActivity() {
     private val channelName = "localdrop/network"
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private lateinit var nativeDiscoveryManager: NativeDiscoveryManager
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -35,6 +36,14 @@ class MainActivity : FlutterActivity() {
                 }
                 "releaseMulticastLock" -> {
                     releaseMulticastLock()
+                    result.success(null)
+                }
+                "acquireWifiLock" -> {
+                    acquireWifiLock()
+                    result.success(null)
+                }
+                "releaseWifiLock" -> {
+                    releaseWifiLock()
                     result.success(null)
                 }
                 "getActiveInterfaces" -> {
@@ -74,6 +83,7 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         nativeDiscoveryManager.stop()
         releaseMulticastLock()
+        releaseWifiLock()
         super.onDestroy()
     }
 
@@ -91,6 +101,27 @@ class MainActivity : FlutterActivity() {
     private fun releaseMulticastLock() {
         val lock = multicastLock ?: return
         if (lock.isHeld) {
+            lock.release()
+        }
+    }
+
+    private fun acquireWifiLock() {
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        val lock = wifiLock ?: wifiManager.createWifiLock(
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            "localdrop_wifi_lock",
+        ).also {
+            it.setReferenceCounted(false)
+            wifiLock = it
+        }
+        if (!lock.isHeld) {
+            lock.acquire()
+        }
+    }
+
+    private fun releaseWifiLock() {
+        val lock = wifiLock
+        if (lock != null && lock.isHeld) {
             lock.release()
         }
     }

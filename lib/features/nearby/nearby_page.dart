@@ -14,6 +14,7 @@ import '../../models/transfer_diagnostics_snapshot.dart';
 import '../../models/transfer_models.dart';
 import '../../state/app_controller.dart';
 import '../../widgets/discovery_troubleshooting_dialog.dart';
+import '../../widgets/receiver_pin_dialog.dart';
 import '../../widgets/transfer_diagnostics_dialog.dart';
 
 class NearbyPage extends StatefulWidget {
@@ -557,10 +558,18 @@ class _NearbyPageState extends State<NearbyPage> {
 
   Future<void> _sendToDevice(DeviceProfile device) async {
     final l10n = AppLocalizations.of(context)!;
+    final receiverPin = await _requestReceiverPin(device);
+    if (!mounted || receiverPin == null) {
+      return;
+    }
     setState(() {
       _sendingDeviceId = device.deviceId;
     });
-    final result = await widget.controller.sendDraftToDevice(device.deviceId);
+    final result = await widget.controller.sendDraftToDevice(
+      device.deviceId,
+      receiverPin: receiverPin.pin,
+      trustConfirmed: receiverPin.trustConfirmed,
+    );
     if (!mounted) {
       return;
     }
@@ -602,7 +611,24 @@ class _NearbyPageState extends State<NearbyPage> {
     if (availability.status == PeerAvailabilityStatus.incompatible) {
       return;
     }
-    await widget.controller.refreshPeerAvailability(device.deviceId);
+    final refreshed = await widget.controller.refreshPeerAvailability(
+      device.deviceId,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (refreshed?.status == PeerAvailabilityStatus.ready) {
+      await _sendToDevice(device);
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final message =
+        refreshed?.errorMessage?.trim().isNotEmpty == true
+        ? refreshed!.errorMessage!
+        : l10n.recipientUnavailableMessage;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _refreshNearbyDevices() async {
@@ -618,6 +644,7 @@ class _NearbyPageState extends State<NearbyPage> {
       SendFailureReason.missingLocalFile => l10n.sendErrorMissingFile,
       SendFailureReason.timeout => l10n.sendErrorTimeout,
       SendFailureReason.approvalExpired => l10n.sendErrorApprovalExpired,
+      SendFailureReason.invalidPin => 'Incorrect receiver PIN',
       SendFailureReason.certificateMismatch => l10n.sendErrorCertificate,
       SendFailureReason.integrityCheckFailed => l10n.sendErrorIntegrity,
       SendFailureReason.rejected => l10n.sendErrorRejected,
@@ -671,10 +698,18 @@ class _NearbyPageState extends State<NearbyPage> {
     }
   }
 
-  String _pickerFailureMessage(
-    AppLocalizations l10n,
-    PickerFailure failure,
-  ) {
+  Future<ReceiverPinResult?> _requestReceiverPin(DeviceProfile device) async {
+    return showReceiverPinDialog(
+      context,
+      peerNickname: device.nickname,
+      requiresSecurityConfirmation: widget.controller
+          .requiresFirstTransferConfirmation(device),
+      peerSecurityCode: widget.controller.securityCodeForDevice(device),
+      localSecurityCode: widget.controller.localSecurityCode,
+    );
+  }
+
+  String _pickerFailureMessage(AppLocalizations l10n, PickerFailure failure) {
     if (failure.isMacOSAvailabilityIssue) {
       return l10n.macosContentPickerUnavailable;
     }

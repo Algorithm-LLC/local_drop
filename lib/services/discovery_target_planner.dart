@@ -16,6 +16,7 @@ class DiscoveryTargetPlanner {
     required List<NetworkInterfaceSnapshot> interfaces,
     required List<int> scanPorts,
     required String multicastAddress,
+    bool includeSubnetHosts = false,
   }) {
     final targets = <String, DiscoverySendTarget>{};
 
@@ -33,14 +34,73 @@ class DiscoveryTargetPlanner {
       (item) => item.isEligibleForDiscovery,
     )) {
       final broadcastAddress = snapshot.broadcastAddress;
-      if (broadcastAddress == null || broadcastAddress.isEmpty) {
-        continue;
-      }
       for (final port in scanPorts) {
-        addTarget(broadcastAddress, port);
+        if (broadcastAddress != null && broadcastAddress.isNotEmpty) {
+          addTarget(broadcastAddress, port);
+        }
+        if (includeSubnetHosts) {
+          for (final host in _directDiscoveryHosts(snapshot)) {
+            addTarget(host, port);
+          }
+        }
       }
     }
 
     return targets.values.toList(growable: false);
+  }
+
+  static Iterable<String> _directDiscoveryHosts(
+    NetworkInterfaceSnapshot snapshot,
+  ) sync* {
+    final local = _parseIpv4Parts(snapshot.address);
+    if (local == null) {
+      return;
+    }
+    final effectivePrefix = snapshot.prefixLength < 24
+        ? 24
+        : snapshot.prefixLength > 30
+        ? 30
+        : snapshot.prefixLength;
+    final ip = _partsToInt(local);
+    final mask = effectivePrefix == 0
+        ? 0
+        : (0xFFFFFFFF << (32 - effectivePrefix)) & 0xFFFFFFFF;
+    final network = ip & mask;
+    final broadcast = network | (~mask & 0xFFFFFFFF);
+    for (var host = network + 1; host < broadcast; host += 1) {
+      if (host == ip) {
+        continue;
+      }
+      yield _intToIpv4String(host);
+    }
+  }
+
+  static List<int>? _parseIpv4Parts(String value) {
+    final segments = value.split('.');
+    if (segments.length != 4) {
+      return null;
+    }
+    final parts = <int>[];
+    for (final segment in segments) {
+      final parsed = int.tryParse(segment);
+      if (parsed == null || parsed < 0 || parsed > 255) {
+        return null;
+      }
+      parts.add(parsed);
+    }
+    return parts;
+  }
+
+  static int _partsToInt(List<int> parts) {
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  }
+
+  static String _intToIpv4String(int value) {
+    return <String>[
+      ((value >> 24) & 0xFF).toString(),
+      ((value >> 16) & 0xFF).toString(),
+      ((value >> 8) & 0xFF).toString(),
+      (value & 0xFF).toString(),
+    ].join('.');
   }
 }

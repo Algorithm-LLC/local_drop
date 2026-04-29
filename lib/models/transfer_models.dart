@@ -50,6 +50,7 @@ enum TransferStage {
 enum TransferTerminalReason {
   discoveryVisibleButUnreachable,
   tlsVerificationFailed,
+  pinVerificationFailed,
   approvalExpired,
   declined,
   uploadFailed,
@@ -62,6 +63,72 @@ enum TransferTerminalReason {
     return TransferTerminalReason.values.firstWhere(
       (item) => item.name == value,
       orElse: () => TransferTerminalReason.unknown,
+    );
+  }
+}
+
+class TransferPinChallenge {
+  const TransferPinChallenge({
+    required this.algorithm,
+    required this.saltBase64,
+    required this.iterations,
+    required this.nonce,
+    required this.expiresAt,
+  });
+
+  final String algorithm;
+  final String saltBase64;
+  final int iterations;
+  final String nonce;
+  final DateTime expiresAt;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'algorithm': algorithm,
+      'saltBase64': saltBase64,
+      'iterations': iterations,
+      'nonce': nonce,
+      'expiresAt': expiresAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory TransferPinChallenge.fromJson(Map<String, dynamic> json) {
+    return TransferPinChallenge(
+      algorithm: (json['algorithm'] as String?) ?? '',
+      saltBase64: (json['saltBase64'] as String?) ?? '',
+      iterations: (json['iterations'] as num?)?.toInt() ?? 0,
+      nonce: (json['nonce'] as String?) ?? '',
+      expiresAt:
+          DateTime.tryParse((json['expiresAt'] as String?) ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
+class TransferPinAuth {
+  const TransferPinAuth({
+    required this.algorithm,
+    required this.nonce,
+    required this.proofBase64,
+  });
+
+  final String algorithm;
+  final String nonce;
+  final String proofBase64;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'algorithm': algorithm,
+      'nonce': nonce,
+      'proofBase64': proofBase64,
+    };
+  }
+
+  factory TransferPinAuth.fromJson(Map<String, dynamic> json) {
+    return TransferPinAuth(
+      algorithm: (json['algorithm'] as String?) ?? '',
+      nonce: (json['nonce'] as String?) ?? '',
+      proofBase64: (json['proofBase64'] as String?) ?? '',
     );
   }
 }
@@ -134,6 +201,7 @@ class TransferOffer {
     required this.protocolVersion,
     required this.createdAt,
     required this.items,
+    this.pinAuth,
   });
 
   final String transferId;
@@ -144,8 +212,23 @@ class TransferOffer {
   final String protocolVersion;
   final DateTime createdAt;
   final List<TransferItem> items;
+  final TransferPinAuth? pinAuth;
 
   int get totalBytes => items.fold<int>(0, (sum, item) => sum + item.sizeBytes);
+
+  TransferOffer copyWith({TransferPinAuth? pinAuth}) {
+    return TransferOffer(
+      transferId: transferId,
+      senderDeviceId: senderDeviceId,
+      senderNickname: senderNickname,
+      senderFingerprint: senderFingerprint,
+      senderAppVersion: senderAppVersion,
+      protocolVersion: protocolVersion,
+      createdAt: createdAt,
+      items: items,
+      pinAuth: pinAuth ?? this.pinAuth,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -157,6 +240,7 @@ class TransferOffer {
       'protocolVersion': protocolVersion,
       'createdAt': createdAt.toUtc().toIso8601String(),
       'items': items.map((item) => item.toJson()).toList(growable: false),
+      'pinAuth': pinAuth?.toJson(),
     };
   }
 
@@ -175,6 +259,9 @@ class TransferOffer {
           .whereType<Map<String, dynamic>>()
           .map(TransferItem.fromJson)
           .toList(growable: false),
+      pinAuth: json['pinAuth'] is Map<String, dynamic>
+          ? TransferPinAuth.fromJson(json['pinAuth'] as Map<String, dynamic>)
+          : null,
     );
   }
 }

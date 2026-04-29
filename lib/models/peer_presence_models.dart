@@ -1,5 +1,61 @@
 import 'device_profile.dart';
 
+enum PeerTrustStatus { untrusted, trusted, missingFingerprint, identityChanged }
+
+class TrustedPeerRecord {
+  const TrustedPeerRecord({
+    required this.deviceId,
+    required this.nickname,
+    required this.certFingerprint,
+    required this.firstTrustedAt,
+    required this.lastVerifiedAt,
+  });
+
+  final String deviceId;
+  final String nickname;
+  final String certFingerprint;
+  final DateTime firstTrustedAt;
+  final DateTime lastVerifiedAt;
+
+  TrustedPeerRecord copyWith({
+    String? nickname,
+    String? certFingerprint,
+    DateTime? lastVerifiedAt,
+  }) {
+    return TrustedPeerRecord(
+      deviceId: deviceId,
+      nickname: nickname ?? this.nickname,
+      certFingerprint: certFingerprint ?? this.certFingerprint,
+      firstTrustedAt: firstTrustedAt,
+      lastVerifiedAt: lastVerifiedAt ?? this.lastVerifiedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'deviceId': deviceId,
+      'nickname': nickname,
+      'certFingerprint': certFingerprint,
+      'firstTrustedAt': firstTrustedAt.toUtc().toIso8601String(),
+      'lastVerifiedAt': lastVerifiedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory TrustedPeerRecord.fromJson(Map<String, dynamic> json) {
+    return TrustedPeerRecord(
+      deviceId: (json['deviceId'] as String?) ?? '',
+      nickname: (json['nickname'] as String?) ?? '',
+      certFingerprint: (json['certFingerprint'] as String?) ?? '',
+      firstTrustedAt:
+          DateTime.tryParse((json['firstTrustedAt'] as String?) ?? '') ??
+          DateTime.now(),
+      lastVerifiedAt:
+          DateTime.tryParse((json['lastVerifiedAt'] as String?) ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
 class TransportVerifiedPeerLease {
   const TransportVerifiedPeerLease({
     required this.deviceId,

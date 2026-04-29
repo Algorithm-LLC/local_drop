@@ -9,6 +9,7 @@ import '../core/constants/network_constants.dart';
 import '../models/device_profile.dart';
 import '../models/transfer_diagnostics_snapshot.dart';
 import '../models/transfer_models.dart';
+import 'transfer_pin_service.dart';
 
 typedef TransferTraceHandler =
     void Function(String message, {Map<String, Object?>? data});
@@ -45,13 +46,29 @@ class TransferClient {
       recipient,
       preferredAvailability: preferredAvailability,
     );
+    if (targets.isEmpty) {
+      return PeerAvailabilitySnapshot(
+        deviceId: recipient.deviceId,
+        nickname: recipient.nickname,
+        status: PeerAvailabilityStatus.securityFailure,
+        updatedAt: DateTime.now(),
+        selectedAddress: recipient.ipAddress,
+        selectedPort: recipient.securePort ?? recipient.activePort,
+        addressFamily: recipient.preferredAddressFamily,
+        errorMessage:
+            'Receiver does not advertise HTTPS transfer with a certificate fingerprint.',
+        protocolVersion: recipient.protocolVersion,
+        appVersion: recipient.appVersion,
+        capabilities: recipient.capabilities,
+      );
+    }
 
     final failures = <_ProbeFailure>[];
     for (final target in targets) {
       final client = _buildClientForTarget(
         target,
-        connectionTimeout: const Duration(seconds: 2),
-        idleTimeout: const Duration(seconds: 3),
+        connectionTimeout: const Duration(seconds: 4),
+        idleTimeout: const Duration(seconds: 6),
       );
       try {
         final payload = await _fetchHealth(client, target);
@@ -185,6 +202,7 @@ class TransferClient {
   Future<TransferRecord> sendTransfer({
     required DeviceProfile recipient,
     required TransferOffer offer,
+    required String receiverPin,
     required void Function(TransferProgress progress) onProgress,
     required bool Function() isCanceled,
     required void Function(TransferDiagnosticsSnapshot snapshot) onDiagnostics,
@@ -198,6 +216,8 @@ class TransferClient {
     );
 
     var transferredBytes = 0;
+    var lastUploadProgressAt = startedAt;
+    var lastUploadProgressBytes = 0;
     var currentDiagnostics = TransferDiagnosticsSnapshot(
       contextId: offer.transferId,
       peerDeviceId: recipient.deviceId,
@@ -265,11 +285,66 @@ class TransferClient {
       );
     }
 
+    void emitUploadProgressThrottled() {
+      final now = DateTime.now();
+      final enoughTimeElapsed =
+          now.difference(lastUploadProgressAt) >=
+          NetworkConstants.transferProgressMinInterval;
+      final enoughBytesSent =
+          transferredBytes - lastUploadProgressBytes >=
+          NetworkConstants.transferProgressMinByteDelta;
+      final isComplete = transferredBytes >= offer.totalBytes;
+      if (!enoughTimeElapsed && !enoughBytesSent && !isComplete) {
+        return;
+      }
+      lastUploadProgressAt = now;
+      lastUploadProgressBytes = transferredBytes;
+      emitProgress(
+        TransferStatus.inProgress,
+        stage: TransferStage.uploading,
+        updatedAt: now,
+      );
+    }
+
     emitProgress(
       TransferStatus.pendingApproval,
       stage: TransferStage.connecting,
     );
     emitDiagnostics(stage: TransferStage.connecting);
+
+    if (targets.isEmpty) {
+      const failure = _FailureDetails(
+        terminalReason: TransferTerminalReason.tlsVerificationFailed,
+        message:
+            'Receiver does not advertise HTTPS transfer with a certificate fingerprint.',
+      );
+      emitProgress(
+        TransferStatus.failed,
+        stage: TransferStage.failed,
+        terminalReason: failure.terminalReason,
+        errorMessage: failure.message,
+      );
+      emitDiagnostics(
+        stage: TransferStage.failed,
+        terminalReason: failure.terminalReason,
+        errorMessage: failure.message,
+      );
+      return TransferRecord(
+        transferId: offer.transferId,
+        peerDeviceId: recipient.deviceId,
+        peerNickname: recipient.nickname,
+        isIncoming: false,
+        items: offer.items,
+        status: TransferStatus.failed,
+        totalBytes: offer.totalBytes,
+        transferredBytes: transferredBytes,
+        startedAt: startedAt,
+        endedAt: DateTime.now(),
+        stage: TransferStage.failed,
+        terminalReason: failure.terminalReason,
+        errorMessage: failure.message,
+      );
+    }
 
     Object? lastError;
     for (final target in targets) {
@@ -280,7 +355,26 @@ class TransferClient {
           target: target,
           lastHttpRoute: '/v1/transfer/offer',
         );
-        final ack = await _sendOffer(client, target, offer);
+        if (isCanceled()) {
+          throw const _TransferCanceledException();
+        }
+        final challenge = await _fetchPinChallenge(client, target);
+        if (isCanceled()) {
+          throw const _TransferCanceledException();
+        }
+        final authedOffer = offer.copyWith(
+          pinAuth: await TransferPinService.buildAuthAsync(
+            pin: receiverPin,
+            challenge: challenge,
+          ),
+        );
+        if (isCanceled()) {
+          throw const _TransferCanceledException();
+        }
+        final ack = await _sendOffer(client, target, authedOffer);
+        if (isCanceled()) {
+          throw const _TransferCanceledException();
+        }
         if (!ack.isQueued) {
           throw _TransferStageException(
             TransferStage.failed,
@@ -419,14 +513,13 @@ class TransferClient {
             target: target,
             transferId: offer.transferId,
             item: item,
+            isCanceled: isCanceled,
             onChunk: (chunkSize) {
               transferredBytes += chunkSize;
-              emitProgress(
-                TransferStatus.inProgress,
-                stage: TransferStage.uploading,
-              );
+              emitUploadProgressThrottled();
             },
             onDataAccepted: (statusCode) {
+              emitUploadProgressThrottled();
               emitDiagnostics(
                 stage: TransferStage.uploading,
                 target: target,
@@ -539,25 +632,40 @@ class TransferClient {
   Future<TransferHealthPeerSnapshot?> discoverPeerAt({
     required String address,
     required int port,
-    bool useTls = true,
     String? expectedFingerprint,
   }) async {
+    final normalizedExpectedFingerprint =
+        expectedFingerprint?.trim().isNotEmpty == true
+        ? expectedFingerprint!.trim()
+        : null;
+    String? presentedFingerprint;
     final target = _TransferTarget(
       address: address,
       port: port,
-      useTls: useTls,
-      expectedFingerprint:
-          expectedFingerprint?.trim().isNotEmpty == true
-          ? expectedFingerprint
-          : (useTls ? senderFingerprintProvider?.call() : null),
+      useTls: true,
+      expectedFingerprint: normalizedExpectedFingerprint,
     );
     final client = _buildClientForTarget(
       target,
-      connectionTimeout: const Duration(milliseconds: 350),
-      idleTimeout: const Duration(seconds: 1),
+      connectionTimeout: const Duration(milliseconds: 700),
+      idleTimeout: const Duration(seconds: 2),
+      allowUnknownCertificate: normalizedExpectedFingerprint == null,
+      onCertificateFingerprint: (fingerprint) {
+        presentedFingerprint = fingerprint;
+      },
     );
     try {
       final payload = await _fetchHealth(client, target);
+      if (normalizedExpectedFingerprint == null) {
+        final advertisedFingerprint =
+            (payload['certFingerprint'] as String?)?.trim().toUpperCase() ?? '';
+        final observedFingerprint =
+            presentedFingerprint?.trim().toUpperCase() ?? '';
+        if (advertisedFingerprint.isEmpty ||
+            advertisedFingerprint != observedFingerprint) {
+          return null;
+        }
+      }
       return _peerSnapshotFromHealthPayload(payload, target);
     } catch (_) {
       return null;
@@ -581,63 +689,53 @@ class TransferClient {
     PeerAvailabilitySnapshot? preferredAvailability,
   }) {
     final prioritized = <_TransferTarget>[];
-    final prefersSecureTransfer = _recipientSupportsHttpsTransfer(recipient);
+    if (!_recipientSupportsHttpsTransfer(recipient)) {
+      return const <_TransferTarget>[];
+    }
+    final expectedFingerprint = recipient.certFingerprint.trim();
+    final seen = <String>{};
+
+    void addTarget(String? address, int? port) {
+      final trimmedAddress = address?.trim() ?? '';
+      final resolvedPort = port ?? 0;
+      if (trimmedAddress.isEmpty || resolvedPort <= 0) {
+        return;
+      }
+      final target = _TransferTarget(
+        address: trimmedAddress,
+        port: resolvedPort,
+        useTls: true,
+        expectedFingerprint: expectedFingerprint,
+      );
+      if (seen.add(target.key)) {
+        prioritized.add(target);
+      }
+    }
+
     if (preferredAvailability?.selectedAddress != null &&
         preferredAvailability?.selectedPort != null) {
-      prioritized.add(
-        _TransferTarget(
-          address: preferredAvailability!.selectedAddress!,
-          port: preferredAvailability.selectedPort!,
-          useTls:
-              prefersSecureTransfer &&
-              preferredAvailability.selectedPort == recipient.securePort,
-          expectedFingerprint:
-              prefersSecureTransfer ? recipient.certFingerprint : null,
-        ),
+      addTarget(
+        preferredAvailability!.selectedAddress,
+        preferredAvailability.selectedPort,
       );
     }
 
+    final defaultSecurePort = recipient.securePort ?? recipient.activePort;
     final addresses = _orderedAddresses(
       recipient,
       preferredAvailability: preferredAvailability,
     );
-    final seen = <String>{};
-    for (final target in prioritized) {
-      seen.add(target.key);
-    }
     for (final address in addresses) {
-      final trimmedAddress = address.trim();
-      if (trimmedAddress.isEmpty) {
-        continue;
+      addTarget(address, defaultSecurePort);
+    }
+
+    for (final source in recipient.discoverySources) {
+      final sourcePort = source.securePort ?? source.activePort;
+      for (final address in source.ipAddresses) {
+        addTarget(address, sourcePort);
       }
-      if (prefersSecureTransfer) {
-        final securePort = recipient.securePort ?? recipient.activePort;
-        if (securePort > 0) {
-          final secureTarget = _TransferTarget(
-            address: trimmedAddress,
-            port: securePort,
-            useTls: true,
-            expectedFingerprint: recipient.certFingerprint,
-          );
-          if (seen.add(secureTarget.key)) {
-            prioritized.add(secureTarget);
-          }
-        }
-        continue;
-      }
-      final ports = <int>[recipient.activePort, ...NetworkConstants.scanPorts];
-      for (final port in ports) {
-        if (port <= 0) {
-          continue;
-        }
-        final target = _TransferTarget(
-          address: trimmedAddress,
-          port: port,
-          useTls: false,
-        );
-        if (seen.add(target.key)) {
-          prioritized.add(target);
-        }
+      if (source.ipAddresses.isEmpty) {
+        addTarget(recipient.ipAddress, sourcePort);
       }
     }
     return prioritized;
@@ -715,10 +813,12 @@ class TransferClient {
       );
     }
     if (error is _TransferHttpException) {
+      final lowerMessage = error.messageFromBody.toLowerCase();
       return _FailureDetails(
-        terminalReason:
-            error.statusCode == HttpStatus.conflict &&
-                error.messageFromBody.toLowerCase().contains('checksum')
+        terminalReason: lowerMessage.contains('pin')
+            ? TransferTerminalReason.pinVerificationFailed
+            : error.statusCode == HttpStatus.conflict &&
+                  lowerMessage.contains('checksum')
             ? TransferTerminalReason.integrityCheckFailed
             : error.statusCode == HttpStatus.notFound
             ? TransferTerminalReason.incompatibleProtocol
@@ -754,10 +854,9 @@ class TransferClient {
   }
 
   int _probeFailureScore(DeviceProfile recipient, _ProbeFailure failure) {
-    final advertisedPort =
-        failure.target.useTls
-            ? recipient.securePort ?? recipient.activePort
-            : recipient.activePort;
+    final advertisedPort = failure.target.useTls
+        ? recipient.securePort ?? recipient.activePort
+        : recipient.activePort;
     final isAdvertisedPort = failure.target.port == advertisedPort;
     final isAdvertisedAddress = recipient.ipAddresses.contains(
       failure.target.address,
@@ -841,6 +940,30 @@ class TransferClient {
     return body.trim().isEmpty
         ? <String, dynamic>{}
         : jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  Future<TransferPinChallenge> _fetchPinChallenge(
+    HttpClient client,
+    _TransferTarget target,
+  ) async {
+    final uri = _uri(target, '/v1/transfer/pin-challenge');
+    final request = await client.getUrl(uri);
+    _applySenderHeaders(request);
+    final response = await request.close();
+    final body = await utf8.decoder.bind(response).join();
+    if (response.statusCode != HttpStatus.ok) {
+      throw _TransferHttpException(
+        statusCode: response.statusCode,
+        message: 'Failed to request receiver PIN challenge',
+        body: body,
+        uri: uri,
+        retryable: false,
+      );
+    }
+    final json = body.trim().isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(body) as Map<String, dynamic>;
+    return TransferPinChallenge.fromJson(json);
   }
 
   Future<TransferOfferAck> _sendOffer(
@@ -955,9 +1078,13 @@ class TransferClient {
     required _TransferTarget target,
     required String transferId,
     required TransferItem item,
+    required bool Function() isCanceled,
     required void Function(int chunkSize) onChunk,
     required void Function(int statusCode) onDataAccepted,
   }) async {
+    if (isCanceled()) {
+      throw const _TransferCanceledException();
+    }
     final uri = _uri(
       target,
       '/v1/transfer/$transferId/data',
@@ -975,6 +1102,9 @@ class TransferClient {
     if (item.isText) {
       final bytes = utf8.encode(item.textContent ?? '');
       request.headers.contentLength = bytes.length;
+      if (isCanceled()) {
+        throw const _TransferCanceledException();
+      }
       request.add(bytes);
       onChunk(bytes.length);
     } else {
@@ -996,10 +1126,17 @@ class TransferClient {
       }
       request.headers.contentLength = item.sizeBytes;
       await request.addStream(
-        _progressStream(sourceFile.openRead(), onChunk: onChunk),
+        _progressStream(
+          _fileChunks(sourceFile),
+          isCanceled: isCanceled,
+          onChunk: onChunk,
+        ),
       );
     }
 
+    if (isCanceled()) {
+      throw const _TransferCanceledException();
+    }
     final response = await request.close();
     final body = await utf8.decoder.bind(response).join();
     onDataAccepted(response.statusCode);
@@ -1100,7 +1237,7 @@ class TransferClient {
         lastSeen: DateTime.now(),
       ),
       selectedAddress: target.address,
-      selectedPort: activePort,
+      selectedPort: securePort ?? activePort,
       addressFamily: addressFamily,
     );
   }
@@ -1138,7 +1275,7 @@ class TransferClient {
     Map<String, String>? queryParameters,
   }) {
     return Uri(
-      scheme: target.useTls ? 'https' : 'http',
+      scheme: 'https',
       host: target.address,
       port: target.port,
       path: path,
@@ -1149,16 +1286,24 @@ class TransferClient {
   bool _recipientSupportsHttpsTransfer(DeviceProfile recipient) {
     final securePort = recipient.securePort ?? recipient.activePort;
     return securePort > 0 &&
-        recipient.capabilities.contains(
-          NetworkConstants.protocolCapabilityHttpsTransfer,
-        ) &&
-        recipient.certFingerprint.trim().isNotEmpty;
+        recipient.certFingerprint.trim().isNotEmpty &&
+        (recipient.capabilities.contains(
+              NetworkConstants.protocolCapabilityHttpsTransfer,
+            ) ||
+            recipient.protocolVersion == NetworkConstants.protocolVersion ||
+            recipient.discoverySources.any(
+              (source) =>
+                  (source.securePort ?? source.activePort) > 0 &&
+                  source.ipAddresses.isNotEmpty,
+            ));
   }
 
   HttpClient _buildClientForTarget(
     _TransferTarget target, {
     Duration connectionTimeout = const Duration(seconds: 8),
     Duration idleTimeout = const Duration(seconds: 20),
+    bool allowUnknownCertificate = false,
+    void Function(String fingerprint)? onCertificateFingerprint,
   }) {
     final client = _buildClient(
       connectionTimeout: connectionTimeout,
@@ -1169,13 +1314,14 @@ class TransferClient {
     }
     final expectedFingerprint = target.expectedFingerprint?.trim() ?? '';
     client.badCertificateCallback = (certificate, host, port) {
-      if (expectedFingerprint.isEmpty) {
-        return false;
-      }
       final fingerprint = sha256
           .convert(certificate.der)
           .toString()
           .toUpperCase();
+      onCertificateFingerprint?.call(fingerprint);
+      if (expectedFingerprint.isEmpty) {
+        return allowUnknownCertificate;
+      }
       return fingerprint == expectedFingerprint.toUpperCase();
     };
     return client;
@@ -1199,11 +1345,30 @@ class TransferClient {
 
   Stream<List<int>> _progressStream(
     Stream<List<int>> source, {
+    required bool Function() isCanceled,
     required void Function(int chunkSize) onChunk,
   }) async* {
     await for (final chunk in source) {
+      if (isCanceled()) {
+        throw const _TransferCanceledException();
+      }
       onChunk(chunk.length);
       yield chunk;
+    }
+  }
+
+  Stream<List<int>> _fileChunks(File file) async* {
+    final input = await file.open();
+    try {
+      while (true) {
+        final chunk = await input.read(NetworkConstants.transferChunkSizeBytes);
+        if (chunk.isEmpty) {
+          break;
+        }
+        yield chunk;
+      }
+    } finally {
+      await input.close();
     }
   }
 

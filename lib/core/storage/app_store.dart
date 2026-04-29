@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/app_preferences.dart';
+import '../../models/peer_presence_models.dart';
 import '../../models/transfer_models.dart';
 
 class AppStore {
@@ -40,8 +41,9 @@ class AppStore {
     }
     _state['schemaVersion'] =
         (_state['schemaVersion'] as num?)?.toInt() ?? schemaVersion;
-    _state.remove('trustedDevices');
     _state['history'] = (_state['history'] as List<dynamic>?) ?? <dynamic>[];
+    _state['trustedPeers'] =
+        (_state['trustedPeers'] as List<dynamic>?) ?? <dynamic>[];
     await _flushState();
   }
 
@@ -92,6 +94,26 @@ class AppStore {
 
   Future<void> saveTransferHistory(List<TransferRecord> history) async {
     _state['history'] = history
+        .map((item) => item.toJson())
+        .toList(growable: false);
+    await _flushState();
+  }
+
+  List<TrustedPeerRecord> loadTrustedPeers() {
+    final entries = (_state['trustedPeers'] as List<dynamic>?) ?? <dynamic>[];
+    return entries
+        .whereType<Map<String, dynamic>>()
+        .map(TrustedPeerRecord.fromJson)
+        .where(
+          (item) =>
+              item.deviceId.trim().isNotEmpty &&
+              item.certFingerprint.trim().isNotEmpty,
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> saveTrustedPeers(List<TrustedPeerRecord> peers) async {
+    _state['trustedPeers'] = peers
         .map((item) => item.toJson())
         .toList(growable: false);
     await _flushState();

@@ -36,6 +36,28 @@ class LocalNetworkPlatformService {
     }
   }
 
+  Future<void> acquireWifiLock() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('acquireWifiLock');
+    } catch (_) {
+      // Wi-Fi lock is best-effort and must not block transfers.
+    }
+  }
+
+  Future<void> releaseWifiLock() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('releaseWifiLock');
+    } catch (_) {
+      // Ignore platform cleanup failures.
+    }
+  }
+
   Future<List<NetworkInterfaceSnapshot>> listActiveInterfaces() async {
     if (!Platform.isAndroid &&
         !Platform.isWindows &&
@@ -112,6 +134,7 @@ class LocalNetworkPlatformService {
         NetworkConstants.protocolCapabilityQueuedApproval,
         if (securePort != null && securePort > 0)
           NetworkConstants.protocolCapabilityHttpsTransfer,
+        NetworkConstants.protocolCapabilityPinAuth,
       ],
     });
   }

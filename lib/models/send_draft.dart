@@ -13,6 +13,7 @@ enum SendFailureReason {
   missingLocalFile,
   timeout,
   approvalExpired,
+  invalidPin,
   certificateMismatch,
   integrityCheckFailed,
   rejected,
@@ -154,6 +155,8 @@ SendFailureReason mapSendFailure({
       return SendFailureReason.transferUnreachable;
     case TransferTerminalReason.tlsVerificationFailed:
       return SendFailureReason.certificateMismatch;
+    case TransferTerminalReason.pinVerificationFailed:
+      return SendFailureReason.invalidPin;
     case TransferTerminalReason.approvalExpired:
       return SendFailureReason.approvalExpired;
     case TransferTerminalReason.declined:
@@ -183,6 +186,9 @@ SendFailureReason mapSendFailure({
       text.contains('handshake') ||
       text.contains('fingerprint')) {
     return SendFailureReason.certificateMismatch;
+  }
+  if (text.contains('pin')) {
+    return SendFailureReason.invalidPin;
   }
   if (text.contains('incompatible protocol') ||
       text.contains('update both devices') ||

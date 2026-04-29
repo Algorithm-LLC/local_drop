@@ -1,6 +1,6 @@
 # Privacy Policy For LocalDrop
 
-Last updated: April 7, 2026
+Last updated: April 28, 2026
 
 This Privacy Policy explains how `Algorithm LLC` ("we", "our", or "us") handles information when you use **LocalDrop** on GitHub, Google Play, the Apple App Store, and supported desktop platforms.
 
@@ -51,9 +51,11 @@ LocalDrop may store the following on your device:
   - nickname
   - theme preference
   - save directory
+- receiver PIN verifier and policy version
 - transfer history
 - transport diagnostics / log files
 - a local app identity used for nearby discovery and transfer sessions
+- trusted-device fingerprints and verification dates
 - metadata needed to show progress, history, troubleshooting, and nearby device status
 
 ### Local network information
@@ -63,6 +65,7 @@ To discover nearby devices and complete transfers, LocalDrop may process:
 - local IP addresses and network interface information
 - nearby device nicknames
 - nearby device IDs
+- nearby certificate fingerprints / short security codes
 - nearby device app version / protocol version
 - nearby transfer endpoint information
 - connection and diagnostic metadata needed to make direct transfers work
@@ -100,12 +103,15 @@ Unless clearly stated otherwise in a future release:
 - we do not use advertising SDKs
 - we do not use third-party analytics SDKs for behavioral tracking
 - we do not upload your transfer contents to our servers as part of normal app use
+- we do not receive support logs unless you choose to send them
 
 ## How Data Is Shared
 
 ### Direct sharing you choose
 
-When you send something with LocalDrop, the selected content and related transfer metadata are shared directly with the receiving device or devices that you choose on your local network.
+When you send something with LocalDrop, the selected files, folders, photos, videos, text, clipboard text, and related transfer metadata are shared directly with the receiving device or devices that you choose on your local network.
+
+LocalDrop does not collect transfer contents on `Algorithm LLC` servers during normal app use. Transfers are user-initiated peer-to-peer transfers over the local network.
 
 ### Service providers and platforms
 
@@ -133,6 +139,7 @@ LocalDrop may request or rely on:
 - network state access
 - Wi-Fi state access
 - Wi-Fi multicast access
+- nearby Wi-Fi devices permission where Android requires it for local network / Wi-Fi APIs
 - system file and media pickers for user-selected content
 
 ### iPhone / iPad
@@ -187,8 +194,13 @@ Security-related measures may include:
 
 - direct local-network transfer architecture
 - receiver approval before accepting incoming transfers
+- HTTPS-only local transfer transport
+- device certificate fingerprints and trusted-device pinning
+- first-transfer security-code comparison
+- 6-12 digit receiver PINs stored as salted PBKDF2-HMAC-SHA256 verifiers
+- checksums for transferred content
+- safe folder archive validation before extraction
 - local diagnostics for troubleshooting
-- transport protection and integrity mechanisms in current app builds
 
 However, no method of transmission, storage, or software operation can be guaranteed to be completely secure.
 

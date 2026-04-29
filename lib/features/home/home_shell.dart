@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:local_drop/l10n/app_localizations.dart';
 
+import '../../models/transfer_models.dart';
 import '../../state/app_controller.dart';
+import '../../widgets/incoming_transfer_dialog.dart';
 import '../history/history_page.dart';
 import '../nearby/nearby_page.dart';
 import '../settings/settings_page.dart';
@@ -22,6 +24,7 @@ class _HomeShellState extends State<HomeShell> {
   _HomeTab _selectedTab = _HomeTab.nearby;
   final Set<String> _seenIncomingTransferIds = <String>{};
   bool _isTransfersModalOpen = false;
+  String? _activeIncomingReviewTransferId;
 
   @override
   Widget build(BuildContext context) {
@@ -92,7 +95,10 @@ class _HomeShellState extends State<HomeShell> {
             if (!wide) {
               return Scaffold(
                 appBar: AppBar(title: Text(l10n.appTitle)),
-                body: IndexedStack(index: selectedIndex, children: pages),
+                body: _buildBodyWithIncomingBanner(
+                  context,
+                  IndexedStack(index: selectedIndex, children: pages),
+                ),
                 bottomNavigationBar: NavigationBar(
                   selectedIndex: selectedIndex,
                   destinations: navigationDestinations,
@@ -119,7 +125,10 @@ class _HomeShellState extends State<HomeShell> {
                     ),
                   ),
                   Expanded(
-                    child: IndexedStack(index: selectedIndex, children: pages),
+                    child: _buildBodyWithIncomingBanner(
+                      context,
+                      IndexedStack(index: selectedIndex, children: pages),
+                    ),
                   ),
                 ],
               ),
@@ -127,6 +136,23 @@ class _HomeShellState extends State<HomeShell> {
           },
         );
       },
+    );
+  }
+
+  Widget _buildBodyWithIncomingBanner(BuildContext context, Widget child) {
+    final pending = widget.controller.pendingIncomingTransferSessions;
+    if (pending.isEmpty) {
+      return child;
+    }
+    final session = pending.first;
+    return Column(
+      children: <Widget>[
+        _IncomingRequestBanner(
+          session: session,
+          onReview: () => _showIncomingApprovalDialog(session),
+        ),
+        Expanded(child: child),
+      ],
     );
   }
 
@@ -187,6 +213,101 @@ class _HomeShellState extends State<HomeShell> {
     setState(() {
       _isTransfersModalOpen = false;
     });
+  }
+
+  Future<void> _showIncomingApprovalDialog(
+    IncomingTransferSession session,
+  ) async {
+    if (_activeIncomingReviewTransferId == session.transferId) {
+      return;
+    }
+    setState(() {
+      _activeIncomingReviewTransferId = session.transferId;
+    });
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AnimatedBuilder(
+            animation: widget.controller,
+            builder: (context, _) {
+              final current = widget.controller.pendingIncomingTransferSessions
+                  .cast<IncomingTransferSession?>()
+                  .firstWhere(
+                    (item) => item?.transferId == session.transferId,
+                    orElse: () => null,
+                  );
+              if (current == null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (Navigator.of(dialogContext).canPop()) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                });
+                return const SizedBox.shrink();
+              }
+              return IncomingTransferDialog(
+                controller: widget.controller,
+                session: current,
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _activeIncomingReviewTransferId = null;
+        });
+      }
+    }
+  }
+}
+
+class _IncomingRequestBanner extends StatelessWidget {
+  const _IncomingRequestBanner({
+    required this.session,
+    required this.onReview,
+  });
+
+  final IncomingTransferSession session;
+  final VoidCallback onReview;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      top: false,
+      bottom: false,
+      child: Material(
+        color: colorScheme.tertiaryContainer.withValues(alpha: 0.92),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.download_for_offline, color: colorScheme.tertiary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '${l10n.incomingRequestsTitle}: ${session.senderNickname}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                onPressed: onReview,
+                child: const Text('Review'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
